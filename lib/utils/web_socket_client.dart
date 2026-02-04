@@ -10,7 +10,6 @@ import 'package:web_socket_channel/status.dart' as status;
 /// - connect: Establish connection with user_id and user_type
 /// - send_message: Send a message to a chat connection
 /// - get_messages: Retrieve messages for a chat connection
-/// - create_chat_user: Create a chat user entry in the database
 class WebSocketClient {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -48,9 +47,6 @@ class WebSocketClient {
   Function(Map<String, dynamic>)? onNewMessage;
   Function(Map<String, dynamic>)? onMessageSent;
   Function(Map<String, dynamic>)? onMessagesReceived;
-  Function(Map<String, dynamic>)? onChatUserCreated;
-  Function(Map<String, dynamic>)? onConnectionsReceived;
-  Function(Map<String, dynamic>)? onConnectionCreated;
   Function(String)? onError;
   Function()? onDisconnected;
   Function()? onReconnecting;
@@ -225,18 +221,6 @@ class WebSocketClient {
           _handleMessages(data);
           break;
 
-        case 'chat_user_created':
-          _handleChatUserCreated(data);
-          break;
-
-        case 'connections':
-          _handleConnections(data);
-          break;
-
-        case 'connection_created':
-          _handleConnectionCreated(data);
-          break;
-
         case 'error':
           _handleServerError(data);
           break;
@@ -285,30 +269,6 @@ class WebSocketClient {
   void _handleMessages(Map<String, dynamic> data) {
     debugPrint('WebSocketClient: Messages received');
     onMessagesReceived?.call(data);
-  }
-
-  /// Handle chat user created confirmation
-  void _handleChatUserCreated(Map<String, dynamic> data) {
-    debugPrint('WebSocketClient: Chat user created - full data: $data');
-    final status = data['status'] as String?;
-    final chatUserId = data['chat_user_id'];
-    final isNew = data['is_new'] as bool?;
-    debugPrint(
-      'WebSocketClient: Chat user created - status: $status, chat_user_id: $chatUserId, is_new: $isNew',
-    );
-    onChatUserCreated?.call(data);
-  }
-
-  /// Handle connections received
-  void _handleConnections(Map<String, dynamic> data) {
-    debugPrint('WebSocketClient: Connections received');
-    onConnectionsReceived?.call(data);
-  }
-
-  /// Handle connection created confirmation
-  void _handleConnectionCreated(Map<String, dynamic> data) {
-    debugPrint('WebSocketClient: Connection created - full data: $data');
-    onConnectionCreated?.call(data);
   }
 
   /// Handle server error
@@ -442,56 +402,6 @@ class WebSocketClient {
     _sendMessage({
       'action': 'get_messages',
       'chat_connection_id': chatConnectionId,
-    });
-  }
-
-  /// Create a chat user entry in the database
-  ///
-  /// [userId] - The user ID (staff_id or student_id)
-  /// [userType] - The user type ('staff' or 'student')
-  void createChatUser({required String userId, required String userType}) {
-    final message = {
-      'action': 'create_chat_user',
-      'user_id': userId,
-      'user_type': userType,
-    };
-    debugPrint(
-      'WebSocketClient: createChatUser called with userId: $userId, userType: $userType',
-    );
-    debugPrint('WebSocketClient: createChatUser message: $message');
-    _sendMessage(message);
-  }
-
-  /// Get all chat connections for the current user
-  ///
-  /// [userId] - Optional user ID (uses connected user ID if not provided)
-  /// [userType] - Optional user type (uses connected user type if not provided)
-  void getConnections({String? userId, String? userType}) {
-    _sendMessage({
-      'action': 'get_connections',
-      'user_id': userId ?? _userId,
-      'user_type': userType ?? _userType,
-    });
-  }
-
-  /// Create a chat connection between two users
-  ///
-  /// [userOneId] - The first user's ID (staff_id or student_id)
-  /// [userOneType] - The first user's type ('staff' or 'student')
-  /// [userTwoId] - The second user's ID (staff_id or student_id)
-  /// [userTwoType] - The second user's type ('staff' or 'student')
-  void createConnection({
-    required String userOneId,
-    required String userOneType,
-    required String userTwoId,
-    required String userTwoType,
-  }) {
-    _sendMessage({
-      'action': 'create_connection',
-      'user_one_id': userOneId,
-      'user_one_type': userOneType,
-      'user_two_id': userTwoId,
-      'user_two_type': userTwoType,
     });
   }
 

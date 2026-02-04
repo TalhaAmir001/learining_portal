@@ -39,7 +39,7 @@ class ChatListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final currentUserId = authProvider.currentUserId;
-    
+
     if (currentUserId == null) {
       debugPrint('ChatListItem: currentUserId is null');
       return const SizedBox.shrink();
@@ -47,12 +47,17 @@ class ChatListItem extends StatelessWidget {
 
     final otherUser = chat.getOtherUser(currentUserId);
     if (otherUser == null) {
-      debugPrint('ChatListItem: otherUser is null for chat ${chat.chatId}, currentUserId: $currentUserId, user1Id: ${chat.user1Id}, user2Id: ${chat.user2Id}');
+      debugPrint(
+        'ChatListItem: otherUser is null for chat ${chat.chatId}, currentUserId: $currentUserId, user1Id: ${chat.user1Id}, user2Id: ${chat.user2Id}',
+      );
       return const SizedBox.shrink();
     }
 
+    // Compare with API user ID (uid) since lastMessageSenderId from API is the API user ID
+    final currentApiUserId = authProvider.currentUser?.uid;
     final isLastMessageFromCurrentUser =
-        chat.lastMessageSenderId == currentUserId;
+        currentApiUserId != null &&
+        chat.lastMessageSenderId == currentApiUserId;
     final lastMessagePreview = chat.lastMessage ?? 'No messages yet';
 
     return InkWell(
@@ -83,8 +88,7 @@ class ChatListItem extends StatelessWidget {
                       ? NetworkImage(otherUser.photoUrl!)
                       : null,
                   child:
-                      otherUser.photoUrl == null ||
-                          otherUser.photoUrl!.isEmpty
+                      otherUser.photoUrl == null || otherUser.photoUrl!.isEmpty
                       ? Icon(
                           Icons.person,
                           color: Theme.of(

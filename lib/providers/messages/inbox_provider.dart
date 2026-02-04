@@ -5,7 +5,7 @@ import '../../models/user_model.dart';
 import '../../models/chat_model.dart';
 import '../../utils/constants.dart';
 import '../../providers/auth_provider.dart';
-import 'package:provider/provider.dart';
+import '../../network/domain/messages_chat_repository.dart';
 
 class InboxProvider with ChangeNotifier {
   final FirebaseFirestore _firestore = firestore;
@@ -44,28 +44,45 @@ class InboxProvider with ChangeNotifier {
     // Don't load chats here - wait for auth provider to be set
   }
 
-  StreamSubscription<QuerySnapshot>? _user1Subscription;
-  StreamSubscription<QuerySnapshot>? _user2Subscription;
-  final Map<String, ChatModel> _chatsMap = {};
-  final Map<String, bool> _chatSubscriptionMap =
-      {}; // Track which subscription each chat belongs to
-  bool _user1SnapshotProcessed = false;
-  bool _user2SnapshotProcessed = false;
-
+  @override
   void dispose() {
-    _user1Subscription?.cancel();
-    _user2Subscription?.cancel();
+    // No subscriptions to cancel anymore
+    super.dispose();
   }
 
-  // Load all chats for the current user
+  // Get user type for API ('staff' or 'student')
+  String _getUserTypeForApi() {
+    if (_authProvider?.userType != null) {
+      final userType = _authProvider!.userType!;
+      // Map app UserType to API user_type
+      // staff = teacher/admin, student = student/guardian
+      if (userType == UserType.teacher || userType == UserType.admin) {
+        return 'staff';
+      } else {
+        return 'student';
+      }
+    }
+    return 'staff';
+  }
+
+  // Get API user ID (staff_id or student_id) from AuthProvider
+  // The uid in UserModel is the actual API ID
+  String? _getApiUserId() {
+    if (_authProvider?.currentUser != null) {
+      return _authProvider!.currentUser!.uid;
+    }
+    return null;
+  }
+
+  // Load all chats for the current user via HTTP API
   Future<void> _loadChats() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      final currentUserId = _authProvider?.currentUserId;
-      if (currentUserId == null ||
+      final apiUserId = _getApiUserId();
+      if (apiUserId == null ||
           _authProvider == null ||
           !_authProvider!.isAuthenticated) {
         _errorMessage = 'User not authenticated';
@@ -74,147 +91,49 @@ class InboxProvider with ChangeNotifier {
         return;
       }
 
-      // Cancel existing subscriptions
-      await _user1Subscription?.cancel();
-      await _user2Subscription?.cancel();
-      _chatsMap.clear();
-      _chatSubscriptionMap.clear();
-      _user1SnapshotProcessed = false;
-      _user2SnapshotProcessed = false;
+      final userType = _getUserTypeForApi();
 
-      // Listen to real-time updates from the 'chats' collection
-      // Set a timeout to ensure loading doesn't stay true forever
-      Future.delayed(const Duration(seconds: 10), () {
-        if (_isLoading &&
-            (!_user1SnapshotProcessed || !_user2SnapshotProcessed)) {
-          debugPrint('Timeout: Forcing loading to complete');
-          _user1SnapshotProcessed = true;
-          _user2SnapshotProcessed = true;
-          _isLoading = false;
-          if (_errorMessage == null) {
-            _errorMessage = 'Timeout waiting for chat data';
-          }
-          notifyListeners();
-        }
-      });
-
-      // Get chats where current user is user1
-      _user1Subscription = _firestore
-          .collection('chats')
-          .where('user1Id', isEqualTo: currentUserId)
-          .snapshots()
-          .listen(
-            (snapshot) async {
-              debugPrint(
-                'User1 subscription received snapshot with ${snapshot.docs.length} docs',
-              );
-              await _processChatsSnapshot(
-                snapshot,
-                currentUserId,
-                isUser1: true,
-              );
-            },
-            onError: (error) {
-              debugPrint('User1 subscription error: $error');
-              _errorMessage = 'Error loading chats: ${error.toString()}';
-              _user1SnapshotProcessed = true;
-              if (_user1SnapshotProcessed && _user2SnapshotProcessed) {
-                _isLoading = false;
-                notifyListeners();
-              }
-            },
-          );
-
-      // Get chats where current user is user2
-      _user2Subscription = _firestore
-          .collection('chats')
-          .where('user2Id', isEqualTo: currentUserId)
-          .snapshots()
-          .listen(
-            (snapshot) async {
-              debugPrint(
-                'User2 subscription received snapshot with ${snapshot.docs.length} docs',
-              );
-              await _processChatsSnapshot(
-                snapshot,
-                currentUserId,
-                isUser1: false,
-              );
-            },
-            onError: (error) {
-              debugPrint('User2 subscription error: $error');
-              _errorMessage = 'Error loading chats: ${error.toString()}';
-              _user2SnapshotProcessed = true;
-              if (_user1SnapshotProcessed && _user2SnapshotProcessed) {
-                _isLoading = false;
-                notifyListeners();
-              }
-            },
-          );
-    } catch (e) {
-      _errorMessage = 'Error loading chats: ${e.toString()}';
-      _isLoading = false;
-      notifyListeners();
-      debugPrint('Error loading chats: $e');
-    }
-  }
-
-  // Process chats snapshot and fetch user data
-  Future<void> _processChatsSnapshot(
-    QuerySnapshot snapshot,
-    String currentUserId, {
-    required bool isUser1,
-  }) async {
-    try {
       debugPrint(
-        'Processing ${isUser1 ? "user1" : "user2"} snapshot with ${snapshot.docs.length} documents',
+        'InboxProvider: Loading connections for user: $apiUserId (type: $userType)',
       );
 
-      // Mark this subscription as processed
-      if (isUser1) {
-        _user1SnapshotProcessed = true;
-      } else {
-        _user2SnapshotProcessed = true;
+      // Get connections from API
+      final result = await MessagesChatRepository.getConnections(
+        userId: apiUserId,
+        userType: userType,
+      );
+
+      if (result['success'] != true) {
+        final error = result['error'] ?? 'Unknown error';
+        _errorMessage = 'Failed to load chats: $error';
+        _isLoading = false;
+        notifyListeners();
+        return;
       }
 
-      // Process document changes (added, modified, removed)
-      // If docChanges is empty but we have docs, process all docs as added
-      // This handles the initial snapshot case
-      final changesToProcess = snapshot.docChanges.isNotEmpty
-          ? snapshot.docChanges
-          : snapshot.docs.map((doc) {
-              // Create a synthetic DocumentChange for initial load
-              return _createDocumentChange(doc, snapshot.docs.indexOf(doc));
-            }).toList();
+      final connections =
+          result['connections'] as List<Map<String, dynamic>>? ?? [];
 
-      for (var change in changesToProcess) {
-        final doc = change.doc;
-        final chatId = doc.id;
+      debugPrint('InboxProvider: Found ${connections.length} connections');
 
-        if (change.type == DocumentChangeType.removed) {
-          // Remove chat if it belongs to this subscription
-          if (_chatSubscriptionMap[chatId] == isUser1) {
-            _chatsMap.remove(chatId);
-            _chatSubscriptionMap.remove(chatId);
-            debugPrint('Removed chat: $chatId');
-          }
-        } else {
-          // Added or modified
-          final chat = ChatModel.fromFirestore(doc);
-          debugPrint(
-            'Processing chat: $chatId, user1Id: ${chat.user1Id}, user2Id: ${chat.user2Id}',
-          );
+      // Convert connections to ChatModel list
+      final List<ChatModel> chats = [];
+      final currentUserId = _authProvider!.currentUserId;
 
-          // Determine which user is the other user
-          final otherUserId = chat.getOtherUserId(currentUserId);
-          if (otherUserId.isEmpty) {
+      for (var conn in connections) {
+        try {
+          final connectionId = conn['id']?.toString() ?? '';
+          final otherUserId = conn['other_user_id']?.toString();
+          final otherUserType = conn['other_user_type']?.toString();
+
+          if (otherUserId == null || otherUserId.isEmpty) {
             debugPrint(
-              'Warning: Could not determine other user ID for chat $chatId. CurrentUserId: $currentUserId',
+              'InboxProvider: Skipping connection $connectionId - no other_user_id',
             );
             continue;
           }
 
-          // Fetch the other user's data
+          // Fetch the other user's data from Firestore
           UserModel? otherUser;
           try {
             final userDoc = await _firestore
@@ -223,35 +142,122 @@ class InboxProvider with ChangeNotifier {
                 .get();
             if (userDoc.exists) {
               otherUser = UserModel.fromFirestore(userDoc);
-              debugPrint('Fetched user data for: ${otherUser.fullName}');
+              debugPrint(
+                'InboxProvider: Fetched user data for: ${otherUser.fullName}',
+              );
             } else {
               debugPrint(
-                'Warning: User document not found for ID: $otherUserId',
+                'InboxProvider: User document not found for ID: $otherUserId',
+              );
+              // Create a minimal user model if not found in Firestore
+              otherUser = UserModel(
+                uid: otherUserId,
+                email: '',
+                userType: otherUserType == 'staff'
+                    ? UserType.teacher
+                    : UserType.student,
               );
             }
           } catch (e) {
-            debugPrint('Error fetching user data: $e');
+            debugPrint('InboxProvider: Error fetching user data: $e');
+            // Create a minimal user model on error
+            otherUser = UserModel(
+              uid: otherUserId,
+              email: '',
+              userType: otherUserType == 'staff'
+                  ? UserType.teacher
+                  : UserType.student,
+            );
           }
 
-          // Update chat with correct user data
-          ChatModel finalChat;
-          if (isUser1) {
-            finalChat = chat.copyWith(user2: otherUser);
-          } else {
-            finalChat = chat.copyWith(user1: otherUser);
+          // Parse last message
+          final lastMessageData = conn['last_message'] as Map<String, dynamic>?;
+          String? lastMessage;
+          DateTime? lastMessageTime;
+          String? lastMessageSenderId;
+          bool hasUnreadMessages = false;
+
+          if (lastMessageData != null) {
+            lastMessage = lastMessageData['message']?.toString();
+            lastMessageSenderId = lastMessageData['sender_id']?.toString();
+            final isRead = lastMessageData['is_read'];
+            hasUnreadMessages = (isRead == 0 || isRead == false);
+
+            // Parse timestamp (Unix timestamp in seconds)
+            final time = lastMessageData['time'];
+            if (time != null) {
+              if (time is int) {
+                // Time is in seconds, convert to milliseconds
+                lastMessageTime = DateTime.fromMillisecondsSinceEpoch(
+                  time * 1000,
+                );
+              } else if (time is String) {
+                try {
+                  // Try parsing as integer string first
+                  final timeInt = int.tryParse(time);
+                  if (timeInt != null) {
+                    lastMessageTime = DateTime.fromMillisecondsSinceEpoch(
+                      timeInt * 1000,
+                    );
+                  } else {
+                    // Try parsing as ISO string
+                    lastMessageTime = DateTime.parse(time);
+                  }
+                } catch (e) {
+                  debugPrint('InboxProvider: Error parsing time: $e');
+                }
+              }
+            }
+
+            // Try created_at if time is not available
+            if (lastMessageTime == null) {
+              final createdAt = lastMessageData['created_at']?.toString();
+              if (createdAt != null) {
+                try {
+                  lastMessageTime = DateTime.parse(createdAt);
+                } catch (e) {
+                  debugPrint('InboxProvider: Error parsing created_at: $e');
+                }
+              }
+            }
           }
 
-          _chatsMap[chatId] = finalChat;
-          _chatSubscriptionMap[chatId] = isUser1;
+          // Parse created_at for connection
+          DateTime? createdAt;
+          final connCreatedAt = conn['created_at']?.toString();
+          if (connCreatedAt != null) {
+            try {
+              createdAt = DateTime.parse(connCreatedAt);
+            } catch (e) {
+              debugPrint(
+                'InboxProvider: Error parsing connection created_at: $e',
+              );
+            }
+          }
+
+          // Create ChatModel with current user as user1 and other user as user2
+          // The ChatModel.getOtherUser() method will handle finding the other user correctly
+          final chatModel = ChatModel(
+            chatId: connectionId,
+            user1Id: currentUserId ?? '',
+            user2Id: otherUserId,
+            user1: null, // Current user - not needed for display
+            user2: otherUser, // Other user - needed for display
+            lastMessage: lastMessage,
+            lastMessageTime: lastMessageTime,
+            lastMessageSenderId: lastMessageSenderId,
+            hasUnreadMessages: hasUnreadMessages,
+            createdAt: createdAt,
+          );
+
+          chats.add(chatModel);
+        } catch (e) {
+          debugPrint('InboxProvider: Error processing connection: $e');
         }
       }
 
-      // Convert map to list
-      _chats = _chatsMap.values.toList();
-      debugPrint('Total chats after processing: ${_chats.length}');
-
       // Sort chats by last message time (most recent first)
-      _chats.sort((a, b) {
+      chats.sort((a, b) {
         if (a.lastMessageTime == null && b.lastMessageTime == null) {
           return 0;
         }
@@ -260,36 +266,17 @@ class InboxProvider with ChangeNotifier {
         return b.lastMessageTime!.compareTo(a.lastMessageTime!);
       });
 
-      // Only set loading to false after both subscriptions have been processed
-      if (_user1SnapshotProcessed && _user2SnapshotProcessed) {
-        _isLoading = false;
-        _errorMessage = null;
-        debugPrint(
-          'Both snapshots processed. Loading complete. Total chats: ${_chats.length}',
-        );
-        notifyListeners();
-      }
-    } catch (e, stackTrace) {
-      debugPrint('Error processing chats: $e');
-      debugPrint('Stack trace: $stackTrace');
-      _errorMessage = 'Error processing chats: ${e.toString()}';
-      // Still mark as processed to avoid infinite loading
-      if (isUser1) {
-        _user1SnapshotProcessed = true;
-      } else {
-        _user2SnapshotProcessed = true;
-      }
-      if (_user1SnapshotProcessed && _user2SnapshotProcessed) {
-        _isLoading = false;
-        notifyListeners();
-      }
+      _chats = chats;
+      _isLoading = false;
+      _errorMessage = null;
+      debugPrint('InboxProvider: Loaded ${_chats.length} chats');
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Error loading chats: ${e.toString()}';
+      _isLoading = false;
+      notifyListeners();
+      debugPrint('InboxProvider: Error loading chats: $e');
     }
-  }
-
-  // Helper to create a DocumentChange for initial load
-  DocumentChange _createDocumentChange(DocumentSnapshot doc, int index) {
-    // Create a minimal DocumentChange-like object
-    return _SyntheticDocumentChange(doc, index);
   }
 
   // Refresh chats list
@@ -312,24 +299,4 @@ class InboxProvider with ChangeNotifier {
           otherUser.email.toLowerCase().contains(lowerQuery);
     }).toList();
   }
-}
-
-// Helper class to simulate DocumentChange for initial load
-class _SyntheticDocumentChange implements DocumentChange {
-  final DocumentSnapshot _doc;
-  final int _newIndex;
-
-  _SyntheticDocumentChange(this._doc, this._newIndex);
-
-  @override
-  DocumentChangeType get type => DocumentChangeType.added;
-
-  @override
-  DocumentSnapshot get doc => _doc;
-
-  @override
-  int get oldIndex => -1;
-
-  @override
-  int get newIndex => _newIndex;
 }

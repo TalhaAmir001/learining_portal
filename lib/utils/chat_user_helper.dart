@@ -27,34 +27,34 @@ class ChatUserHelper {
       final completer = Completer<bool>();
 
       // Set up callback for chat user creation
-      wsClient.onChatUserCreated = (data) {
-        debugPrint(
-          'ChatUserHelper: onChatUserCreated callback triggered with data: $data',
-        );
-        final status = data['status'] as String?;
-        final chatUserId = data['chat_user_id'];
-        final isNew = data['is_new'] as bool? ?? false;
-
-        debugPrint(
-          'ChatUserHelper: Parsed - status: $status, chatUserId: $chatUserId, isNew: $isNew',
-        );
-
-        if (status == 'success' && chatUserId != null) {
-          debugPrint(
-            'ChatUserHelper: Chat user created successfully. ID: $chatUserId, is_new: $isNew',
-          );
-          if (!completer.isCompleted) {
-            completer.complete(true);
-          }
-        } else {
-          debugPrint(
-            'ChatUserHelper: Failed to create chat user - status: $status, chatUserId: $chatUserId',
-          );
-          if (!completer.isCompleted) {
-            completer.complete(false);
-          }
-        }
-      };
+      // wsClient.onChatUserCreated = (data) {
+      //   debugPrint(
+      //     'ChatUserHelper: onChatUserCreated callback triggered with data: $data',
+      //   );
+      //   final status = data['status'] as String?;
+      //   final chatUserId = data['chat_user_id'];
+      //   final isNew = data['is_new'] as bool? ?? false;
+      //
+      //   debugPrint(
+      //     'ChatUserHelper: Parsed - status: $status, chatUserId: $chatUserId, isNew: $isNew',
+      //   );
+      //
+      //   if (status == 'success' && chatUserId != null) {
+      //     debugPrint(
+      //       'ChatUserHelper: Chat user created successfully. ID: $chatUserId, is_new: $isNew',
+      //     );
+      //     if (!completer.isCompleted) {
+      //       completer.complete(true);
+      //     }
+      //   } else {
+      //     debugPrint(
+      //       'ChatUserHelper: Failed to create chat user - status: $status, chatUserId: $chatUserId',
+      //     );
+      //     if (!completer.isCompleted) {
+      //       completer.complete(false);
+      //     }
+      //   }
+      // };
 
       // Set up error callback to handle server errors
       wsClient.onError = (error) {
@@ -106,7 +106,7 @@ class ChatUserHelper {
       // Add a small delay to ensure connection is stable
       await Future.delayed(const Duration(milliseconds: 100));
 
-      wsClient.createChatUser(userId: userId, userType: userType);
+      // wsClient.createChatUser(userId: userId, userType: userType);
       debugPrint(
         'ChatUserHelper: create_chat_user request sent, waiting for response...',
       );

@@ -138,23 +138,6 @@ class ChatProvider with ChangeNotifier {
       }
     };
 
-    _wsClient!.onChatUserCreated = (data) {
-      debugPrint('ChatProvider: Chat user created');
-      final chatUserId = data['chat_user_id']?.toString();
-      final isNew = data['is_new'] as bool? ?? false;
-      debugPrint('ChatProvider: Chat user ID: $chatUserId, is_new: $isNew');
-    };
-
-    _wsClient!.onConnectionsReceived = (data) {
-      debugPrint('ChatProvider: Connections received via WebSocket');
-      // This will be handled by the completer in _getOrCreateChatConnection
-    };
-
-    _wsClient!.onConnectionCreated = (data) {
-      debugPrint('ChatProvider: Connection created via WebSocket');
-      // This will be handled by the completer in _getOrCreateChatConnection
-    };
-
     _wsClient!.onError = (error) {
       debugPrint('ChatProvider: WebSocket error: $error');
       _errorMessage = error;
@@ -243,7 +226,7 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Get or create chat connection via WebSocket
+  // Get or create chat connection via HTTP API
   // otherUserId should be the API user ID (staff_id or student_id) of the other user
   Future<String?> _getOrCreateChatConnection(
     String currentUserId,
@@ -258,164 +241,77 @@ class ChatProvider with ChangeNotifier {
         return null;
       }
 
-      // Ensure WebSocket is connected
-      if (_wsClient == null || !_wsClient!.isConnected) {
-        await _initializeWebSocket(authProvider);
-      }
+      // Determine other user type (opposite of current user type)
+      final otherUserType = userType == 'staff' ? 'student' : 'staff';
 
-      if (_wsClient == null || !_wsClient!.isConnected) {
-        debugPrint(
-          'ChatProvider: Cannot get connections - WebSocket not connected',
-        );
-        return null;
-      }
-
-      // Create completers for async operations
-      final connectionsCompleter = Completer<List<Map<String, dynamic>>>();
-      final createConnectionCompleter = Completer<String?>();
-
-      // Store original callbacks
-      final originalConnectionsCallback = _wsClient!.onConnectionsReceived;
-      final originalConnectionCreatedCallback = _wsClient!.onConnectionCreated;
-      final originalErrorCallback = _wsClient!.onError;
-
-      // Set up one-time callback for connections
-      _wsClient!.onConnectionsReceived = (data) {
-        if (data['status'] == 'success' && data['connections'] != null) {
-          final connections = (data['connections'] as List)
-              .cast<Map<String, dynamic>>();
-          connectionsCompleter.complete(connections);
-        } else {
-          connectionsCompleter.complete([]);
-        }
-        _wsClient!.onConnectionsReceived = originalConnectionsCallback;
-      };
-
-      // Set up one-time callback for connection creation
-      _wsClient!.onConnectionCreated = (data) {
-        if (data['status'] == 'success' && data['connection_id'] != null) {
-          final connectionId = data['connection_id'].toString();
-          createConnectionCompleter.complete(connectionId);
-        } else {
-          createConnectionCompleter.complete(null);
-        }
-        _wsClient!.onConnectionCreated = originalConnectionCreatedCallback;
-      };
-
-      // Set up error callback
-      _wsClient!.onError = (error) {
-        if (error.contains('connection') ||
-            error.contains('get_connections') ||
-            error.contains('create_connection')) {
-          debugPrint('ChatProvider: Error with connections: $error');
-          if (!connectionsCompleter.isCompleted) {
-            connectionsCompleter.complete([]);
-          }
-          if (!createConnectionCompleter.isCompleted) {
-            createConnectionCompleter.complete(null);
-          }
-          _wsClient!.onError = originalErrorCallback;
-        } else {
-          originalErrorCallback?.call(error);
-        }
-      };
-
-      // Request connections via WebSocket
+      // Get connection via HTTP API
       try {
         debugPrint(
-          'ChatProvider: Requesting connections for user: $apiUserId (type: $userType)',
-        );
-        _wsClient!.getConnections(userId: apiUserId, userType: userType);
-
-        // Wait for connections with timeout
-        final connections = await connectionsCompleter.future.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            debugPrint('ChatProvider: Timeout waiting for connections');
-            return <Map<String, dynamic>>[];
-          },
+          'ChatProvider: Requesting connection via HTTP API for users: $apiUserId ($userType) <-> $otherUserId ($otherUserType)',
         );
 
-        debugPrint('ChatProvider: Found ${connections.length} connections');
-
-        // Find connection with the other user
-        for (var conn in connections) {
-          final connectionId = conn['id']?.toString();
-          final userOneId = conn['user_one_id']?.toString();
-          final userTwoId = conn['user_two_id']?.toString();
-          final otherUserIdFromConn = conn['other_user_id']?.toString();
-
-          debugPrint(
-            'ChatProvider: Checking connection $connectionId: user1=$userOneId, user2=$userTwoId, other=$otherUserIdFromConn, looking for=$otherUserId',
-          );
-
-          // Check if otherUserId matches either user in the connection
-          if (connectionId != null &&
-              (userOneId == otherUserId ||
-                  userTwoId == otherUserId ||
-                  otherUserIdFromConn == otherUserId)) {
-            debugPrint(
-              'ChatProvider: Found matching connection: $connectionId',
-            );
-            // Restore callbacks
-            _wsClient!.onConnectionsReceived = originalConnectionsCallback;
-            _wsClient!.onConnectionCreated = originalConnectionCreatedCallback;
-            _wsClient!.onError = originalErrorCallback;
-            return connectionId;
-          }
-        }
-      } catch (e) {
-        debugPrint('ChatProvider: Error getting connections: $e');
-      }
-
-      // If no connection found, try to create one via WebSocket
-      debugPrint(
-        'ChatProvider: No existing connection found, attempting to create one...',
-      );
-      try {
-        // Determine other user type (opposite of current user type)
-        final otherUserType = userType == 'staff' ? 'student' : 'staff';
-
-        debugPrint(
-          'ChatProvider: Creating connection: $apiUserId ($userType) <-> $otherUserId ($otherUserType)',
-        );
-
-        _wsClient!.createConnection(
+        final result = await MessagesChatRepository.getConnection(
           userOneId: apiUserId,
           userOneType: userType,
           userTwoId: otherUserId,
           userTwoType: otherUserType,
         );
 
-        // Wait for connection creation with timeout
-        final connectionId = await createConnectionCompleter.future.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            debugPrint('ChatProvider: Timeout waiting for connection creation');
-            return null;
-          },
-        );
+        if (result['success'] == true) {
+          final exists = result['exists'] as bool? ?? false;
+          final connectionId = result['connection_id']?.toString();
 
-        if (connectionId != null) {
-          debugPrint(
-            'ChatProvider: Successfully created connection: $connectionId',
-          );
-          // Restore callbacks
-          _wsClient!.onConnectionsReceived = originalConnectionsCallback;
-          _wsClient!.onConnectionCreated = originalConnectionCreatedCallback;
-          _wsClient!.onError = originalErrorCallback;
-          return connectionId;
+          if (exists && connectionId != null) {
+            debugPrint(
+              'ChatProvider: Found existing connection: $connectionId',
+            );
+            return connectionId;
+          } else {
+            debugPrint('ChatProvider: Connection does not exist');
+          }
         } else {
-          debugPrint('ChatProvider: Failed to create connection');
+          final error = result['error'] ?? 'Unknown error';
+          debugPrint(
+            'ChatProvider: Failed to get connection via HTTP API: $error',
+          );
+          // Continue to try creating connection even if getting connection failed
         }
       } catch (e) {
-        debugPrint('ChatProvider: Error creating connection: $e');
+        debugPrint('ChatProvider: Error getting connection via HTTP API: $e');
       }
 
-      // Restore callbacks
-      _wsClient!.onConnectionsReceived = originalConnectionsCallback;
-      _wsClient!.onConnectionCreated = originalConnectionCreatedCallback;
-      _wsClient!.onError = originalErrorCallback;
+      // If no connection found, try to create one via HTTP API
+      debugPrint(
+        'ChatProvider: No existing connection found, attempting to create one via HTTP API...',
+      );
+      try {
+        debugPrint(
+          'ChatProvider: Creating connection via HTTP API: $apiUserId ($userType) <-> $otherUserId ($otherUserType)',
+        );
+
+        // Use HTTP API to create connection
+        final result = await MessagesChatRepository.createConnection(
+          userOneId: apiUserId,
+          userOneType: userType,
+          userTwoId: otherUserId,
+          userTwoType: otherUserType,
+        );
+
+        if (result['success'] == true && result['connection_id'] != null) {
+          final connectionId = result['connection_id'].toString();
+          debugPrint(
+            'ChatProvider: Successfully created connection via HTTP API: $connectionId',
+          );
+          return connectionId;
+        } else {
+          final error = result['error'] ?? 'Unknown error';
+          debugPrint(
+            'ChatProvider: Failed to create connection via HTTP API: $error',
+          );
+        }
+      } catch (e) {
+        debugPrint('ChatProvider: Error creating connection via HTTP API: $e');
+      }
 
       debugPrint(
         'ChatProvider: No connection found and could not create one for users: $apiUserId <-> $otherUserId',
