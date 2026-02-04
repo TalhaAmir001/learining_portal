@@ -1,0 +1,28 @@
+{
+    "flutter": {
+        "platforms": {
+            "android": {
+                "default": {
+                    "projectId": "learning-portal-49d80",
+                    "appId": "1:463224635997:android:84fa9b3f9566f75fc743b4",
+                    "fileOutput": "android/app/google-services.json"
+                }
+            },
+            "dart": {
+                "lib/firebase_options.dart": {
+                    "projectId": "learning-portal-49d80",
+                    "configurations": {
+                        "android": "1:463224635997:android:84fa9b3f9566f75fc743b4",
+                        "ios": "1:463224635997:ios:adec535090e60683c743b4",
+                        "macos": "1:463224635997:ios:adec535090e60683c743b4",
+                        "web": "1:463224635997:web:9ed45fde21e24e11c743b4",
+                        "windows": "1:463224635997:web:8d835e5cf87b5359c743b4"
+                    }
+                }
+            }
+        }
+    },
+    "functions": {
+        "source": "functions"
+    }
+}

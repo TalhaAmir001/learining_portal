@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "463224635997",
+    "project_id": "learning-portal-49d80",
+    "storage_bucket": "learning-portal-49d80.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:463224635997:android:84fa9b3f9566f75fc743b4",
+        "android_client_info": {
+          "package_name": "uk.co.gcsewithrosi.portal.learining_portal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC6-u2H5t9OLQjkBfVR_acVZ-5Jd7aYh1c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
