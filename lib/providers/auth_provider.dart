@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/network/domain/auth_repository.dart';
+import 'package:learining_portal/utils/web_socket_client.dart';
 
 enum UserType { student, guardian, teacher, admin }
 
@@ -20,6 +21,14 @@ class AuthProvider with ChangeNotifier {
   String? _errorMessage;
   UserModel? _currentUser;
   String? _currentUserId; // Store the document ID for Firestore
+
+  // WebSocket client for real-time messaging
+  WebSocketClient? _wsClient;
+  bool _isWebSocketConnected = false;
+  bool _shouldMaintainConnection = true; // Flag to maintain connection
+
+  // Callback for when new messages are received
+  Function(Map<String, dynamic>)? onNewMessageReceived;
 
   // Constructor for normal initialization
   AuthProvider() {
@@ -178,6 +187,7 @@ class AuthProvider with ChangeNotifier {
   // Convenience getters for backward compatibility
   String? get userEmail => _currentUser?.email;
   UserType? get userType => _currentUser?.userType;
+  bool get isWebSocketConnected => _isWebSocketConnected;
 
   // Convert UserType enum to string
   String _userTypeToString(UserType userType) {
@@ -190,6 +200,195 @@ class AuthProvider with ChangeNotifier {
         return 'teacher';
       case UserType.admin:
         return 'admin';
+    }
+  }
+
+  // Get user type for WebSocket ('staff' or 'student')
+  String _getUserTypeForWebSocket() {
+    if (_currentUser?.userType != null) {
+      final userType = _currentUser!.userType;
+      // Map app UserType to WebSocket user_type
+      // staff = teacher/admin, student = student/guardian
+      if (userType == UserType.teacher || userType == UserType.admin) {
+        return 'staff';
+      } else {
+        return 'student';
+      }
+    }
+    return 'staff';
+  }
+
+  // Get API user ID (staff_id or student_id) for WebSocket
+  String? _getApiUserIdForWebSocket() {
+    // The uid field in UserModel is the actual API ID
+    // For admin/teacher: it's result.id from AdminDataModel
+    // For student/guardian: it's result.id from UserDataModel
+    return _currentUser?.uid;
+  }
+
+  // Initialize WebSocket connection
+  Future<void> _initializeWebSocket() async {
+    // Don't connect if we shouldn't maintain connection
+    if (!_shouldMaintainConnection) {
+      debugPrint('AuthProvider: WebSocket connection maintenance disabled');
+      return;
+    }
+
+    // Don't connect if already connected with the same user
+    final apiUserId = _getApiUserIdForWebSocket();
+    if (apiUserId == null) {
+      debugPrint('AuthProvider: Cannot initialize WebSocket - no API user ID');
+      return;
+    }
+
+    final userType = _getUserTypeForWebSocket();
+
+    // If WebSocket client already exists and connected with same user, skip
+    if (_wsClient != null &&
+        _wsClient!.isConnected &&
+        _wsClient!.userId == apiUserId) {
+      debugPrint(
+        'AuthProvider: WebSocket already connected for user $apiUserId',
+      );
+      _isWebSocketConnected = true;
+      return;
+    }
+
+    // If WebSocket client exists but not connected, try to reconnect
+    if (_wsClient != null &&
+        !_wsClient!.isConnected &&
+        _wsClient!.userId == apiUserId) {
+      debugPrint(
+        'AuthProvider: WebSocket exists but not connected, reconnecting...',
+      );
+      // The existing client should auto-reconnect, but we'll ensure it's trying
+      try {
+        final connected = await _wsClient!.connect(
+          userId: apiUserId,
+          userType: userType,
+          autoReconnect: true,
+        );
+        if (connected) {
+          _isWebSocketConnected = true;
+          debugPrint('AuthProvider: WebSocket reconnected successfully');
+          notifyListeners();
+        }
+        return;
+      } catch (e) {
+        debugPrint(
+          'AuthProvider: Reconnection attempt failed, creating new client: $e',
+        );
+        // Fall through to create new client
+      }
+    }
+
+    // Dispose existing client if user changed
+    if (_wsClient != null) {
+      _wsClient!.dispose();
+    }
+
+    // Create new WebSocket client
+    _wsClient = WebSocketClient();
+
+    // Set up callbacks
+    _wsClient!.onConnected = (data) {
+      debugPrint('AuthProvider: WebSocket connected');
+      _isWebSocketConnected = true;
+      notifyListeners();
+    };
+
+    _wsClient!.onNewMessage = (data) {
+      debugPrint('AuthProvider: New message received via WebSocket');
+      // Notify listeners (like InboxProvider) about new message
+      onNewMessageReceived?.call(data);
+      notifyListeners();
+    };
+
+    _wsClient!.onError = (error) {
+      debugPrint('AuthProvider: WebSocket error: $error');
+      _isWebSocketConnected = false;
+      notifyListeners();
+    };
+
+    _wsClient!.onDisconnected = () {
+      debugPrint('AuthProvider: WebSocket disconnected');
+      _isWebSocketConnected = false;
+      notifyListeners();
+
+      // Auto-reconnect if user is still authenticated and we should maintain connection
+      if (_isAuthenticated &&
+          _shouldMaintainConnection &&
+          _currentUser != null) {
+        debugPrint('AuthProvider: Attempting to reconnect WebSocket...');
+        // Wait a bit before reconnecting to avoid rapid reconnection attempts
+        Future.delayed(const Duration(seconds: 2), () {
+          if (_isAuthenticated && _shouldMaintainConnection) {
+            _initializeWebSocket().catchError((error) {
+              debugPrint('AuthProvider: Auto-reconnect failed: $error');
+            });
+          }
+        });
+      }
+    };
+
+    _wsClient!.onReconnecting = () {
+      debugPrint('AuthProvider: WebSocket reconnecting...');
+      _isWebSocketConnected = false;
+      notifyListeners();
+    };
+
+    // Connect to WebSocket server
+    final connected = await _wsClient!.connect(
+      userId: apiUserId,
+      userType: userType,
+      autoReconnect: true,
+    );
+
+    if (connected) {
+      _isWebSocketConnected = true;
+      debugPrint('AuthProvider: WebSocket connection established');
+    } else {
+      _isWebSocketConnected = false;
+      debugPrint('AuthProvider: Failed to establish WebSocket connection');
+    }
+    notifyListeners();
+  }
+
+  // Ensure WebSocket connection is maintained
+  // This can be called periodically or when app comes to foreground
+  Future<void> ensureWebSocketConnection() async {
+    if (!_isAuthenticated || !_shouldMaintainConnection) {
+      return;
+    }
+
+    final apiUserId = _getApiUserIdForWebSocket();
+    if (apiUserId == null) {
+      return;
+    }
+
+    // Check if connection is active
+    if (_wsClient == null || !_wsClient!.isConnected) {
+      debugPrint('AuthProvider: WebSocket not connected, initializing...');
+      await _initializeWebSocket();
+    }
+  }
+
+  // Disconnect WebSocket (only used when absolutely necessary, like app termination)
+  void _disconnectWebSocket({bool force = false}) {
+    if (_wsClient != null) {
+      if (force) {
+        debugPrint('AuthProvider: Force disconnecting WebSocket');
+        _shouldMaintainConnection = false;
+        _wsClient!.disconnect();
+        _wsClient = null;
+        _isWebSocketConnected = false;
+        notifyListeners();
+      } else {
+        // Just mark that we shouldn't maintain connection, but don't disconnect
+        // The connection will naturally close when app terminates
+        debugPrint('AuthProvider: Stopping WebSocket connection maintenance');
+        _shouldMaintainConnection = false;
+      }
     }
   }
 
@@ -378,6 +577,13 @@ class AuthProvider with ChangeNotifier {
         // Don't fail login if chat user creation fails
       });
 
+      // Enable connection maintenance and initialize WebSocket
+      _shouldMaintainConnection = true;
+      _initializeWebSocket().catchError((error) {
+        debugPrint('Error initializing WebSocket after login: $error');
+        // Don't fail login if WebSocket connection fails
+      });
+
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -451,6 +657,13 @@ class AuthProvider with ChangeNotifier {
         // Don't fail login if chat user creation fails
       });
 
+      // Enable connection maintenance and initialize WebSocket
+      _shouldMaintainConnection = true;
+      _initializeWebSocket().catchError((error) {
+        debugPrint('Error initializing WebSocket after login: $error');
+        // Don't fail login if WebSocket connection fails
+      });
+
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -483,6 +696,15 @@ class AuthProvider with ChangeNotifier {
   // Sign out
   Future<void> logout() async {
     try {
+      // Stop maintaining WebSocket connection (but don't force disconnect)
+      // The connection will naturally close when user logs out
+      _shouldMaintainConnection = false;
+      if (_wsClient != null) {
+        // Just stop auto-reconnect, let connection close naturally
+        _wsClient = null;
+      }
+      _isWebSocketConnected = false;
+
       // Clear user ID from SharedPreferences
       await _clearUserIdFromSharedPreferences();
 
@@ -522,9 +744,17 @@ class AuthProvider with ChangeNotifier {
           // User data loaded successfully
           _isAuthenticated = true;
           _currentUserId = savedUserId;
+          _shouldMaintainConnection = true; // Enable connection maintenance
           debugPrint(
             'User session restored from SharedPreferences: $savedUserId',
           );
+          // Initialize WebSocket connection for already authenticated user
+          _initializeWebSocket().catchError((error) {
+            debugPrint(
+              'Error initializing WebSocket after auth state check: $error',
+            );
+            // Don't fail auth state check if WebSocket connection fails
+          });
         } else {
           // User data not found in Firestore, clear SharedPreferences
           await _clearUserIdFromSharedPreferences();
@@ -643,5 +873,14 @@ class AuthProvider with ChangeNotifier {
       default:
         return UserType.student;
     }
+  }
+
+  @override
+  void dispose() {
+    // Only force disconnect if provider is being disposed
+    // In normal app lifecycle, connection will be maintained
+    // This is typically only called when app is completely terminated
+    _disconnectWebSocket(force: true);
+    super.dispose();
   }
 }

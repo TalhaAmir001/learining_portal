@@ -25,6 +25,7 @@ if (!defined('ENVIRONMENT')) {
 }
 
 require __DIR__ . '/vendor/autoload.php';
+require __DIR__ . '/fcm_notification_helper.php';
 
 // Load CodeIgniter database configuration
 // We'll load it in each method to ensure fresh connection
@@ -33,11 +34,13 @@ class ChatWebSocketServer implements MessageComponentInterface
 {
     protected $clients;
     protected $users; // Map user_id to connection
+    protected $fcmHelper; // FCM notification helper
 
     public function __construct()
     {
         $this->clients = new \SplObjectStorage;
         $this->users = [];
+        $this->fcmHelper = new FCMNotificationHelper();
     }
 
     public function onOpen(ConnectionInterface $conn)
@@ -137,8 +140,9 @@ class ChatWebSocketServer implements MessageComponentInterface
                     if ($message_id) {
                         // Get receiver's actual user_id (staff_id/student_id) for broadcasting
                         $receiver_user_id = $this->getReceiverUserId($chat_connection_id, $sender_chat_user_id);
+                        $receiver_user_type = $this->getReceiverUserType($chat_connection_id, $sender_chat_user_id);
 
-                        // Broadcast to receiver if connected
+                        // Broadcast to receiver if connected via WebSocket
                         if ($receiver_user_id && isset($this->users[$receiver_user_id])) {
                             $this->users[$receiver_user_id]->send(json_encode([
                                 'action' => 'new_message',
@@ -149,6 +153,21 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 'sender_id' => $sender_id,
                                 'created_at' => date('Y-m-d H:i:s')
                             ]));
+                            echo "Message delivered via WebSocket to user $receiver_user_id\n";
+                        } else {
+                            // Receiver not connected via WebSocket - send FCM notification
+                            // This handles cases where app is closed or in background
+                            if ($receiver_user_id && $receiver_user_type) {
+                                echo "Receiver $receiver_user_id not connected via WebSocket, sending FCM notification...\n";
+                                $this->fcmHelper->sendMessageNotification(
+                                    $receiver_user_id,
+                                    $receiver_user_type,
+                                    $sender_id,
+                                    $user_type,
+                                    $message,
+                                    $chat_connection_id
+                                );
+                            }
                         }
 
                         // Confirm to sender
@@ -571,6 +590,35 @@ class ChatWebSocketServer implements MessageComponentInterface
             $user_id = $row['staff_id'] ? $row['staff_id'] : $row['student_id'];
             $mysqli->close();
             return $user_id;
+        }
+
+        $mysqli->close();
+        return null;
+    }
+
+    /**
+     * Get receiver's user_type for FCM notifications
+     */
+    private function getReceiverUserType($chat_connection_id, $sender_chat_user_id)
+    {
+        $receiver_chat_user_id = $this->getReceiverChatUserId($chat_connection_id, $sender_chat_user_id);
+        if (!$receiver_chat_user_id) {
+            return null;
+        }
+
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return null;
+        }
+
+        $receiver_chat_user_id = $mysqli->real_escape_string($receiver_chat_user_id);
+        $sql = "SELECT user_type FROM fl_chat_users WHERE id = '$receiver_chat_user_id' LIMIT 1";
+        $result = $mysqli->query($sql);
+
+        if ($result && $row = $result->fetch_assoc()) {
+            $user_type = $row['user_type'];
+            $mysqli->close();
+            return $user_type;
         }
 
         $mysqli->close();

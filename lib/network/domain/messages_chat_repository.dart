@@ -32,7 +32,7 @@ class MessagesChatRepository {
 
       // Call the HTTP API endpoint
       final response = await ApiClient.post(
-        endpoint: '/websocket/create_chat_user',
+        endpoint: '/mobile_apis/create_chat_user.php',
         body: {'user_id': userId, 'user_type': userType},
       );
 

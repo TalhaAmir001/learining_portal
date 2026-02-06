@@ -238,19 +238,52 @@ class AuthWrapper extends StatefulWidget {
   State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    // Initialize notifications after first frame
+    WidgetsBinding.instance.addObserver(this);
+
+    // Initialize notifications and WebSocket message listener after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       final notificationProvider = Provider.of<NotificationProvider>(
         context,
         listen: false,
       );
+      final inboxProvider = Provider.of<InboxProvider>(context, listen: false);
+
       notificationProvider.initialize(authProvider);
+
+      // Set up WebSocket message listener to refresh inbox when new messages arrive
+      authProvider.onNewMessageReceived = (messageData) {
+        debugPrint('Main: New message received, refreshing inbox');
+        // Refresh inbox to show new messages
+        inboxProvider.refreshChats();
+      };
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    if (state == AppLifecycleState.resumed) {
+      // App came to foreground - ensure WebSocket is connected
+      debugPrint('Main: App resumed, ensuring WebSocket connection');
+      if (authProvider.isAuthenticated) {
+        authProvider.ensureWebSocketConnection().catchError((error) {
+          debugPrint('Main: Error ensuring WebSocket connection: $error');
+        });
+      }
+    }
   }
 
   @override
