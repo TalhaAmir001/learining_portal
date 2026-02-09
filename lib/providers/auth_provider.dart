@@ -66,6 +66,20 @@ class AuthProvider with ChangeNotifier {
             );
           });
     }
+
+    // Initialize WebSocket if user is already authenticated
+    if (isAuthenticated && currentUser != null) {
+      _shouldMaintainConnection = true;
+      // Initialize WebSocket asynchronously after a short delay to ensure app is ready
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _initializeWebSocket().catchError((error) {
+          debugPrint(
+            'Error initializing WebSocket in withInitialState: $error',
+          );
+          // Don't fail initialization if WebSocket connection fails
+        });
+      });
+    }
   }
 
   bool get isInitializing => _isInitializing;

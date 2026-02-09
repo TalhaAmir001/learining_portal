@@ -13,19 +13,41 @@ class NotificationProvider with ChangeNotifier {
     if (_isInitialized) return;
 
     _authProvider = authProvider;
-    
+
     try {
       // Initialize notification service
       await _notificationService.initialize();
 
-      // Get and save FCM token
+      // Get and save FCM token (non-blocking - app works even if FCM fails)
       if (authProvider.isAuthenticated && authProvider.currentUserId != null) {
-        final token = await _notificationService.getFCMToken();
-        if (token != null) {
-          await _notificationService.saveFCMTokenToUser(
-            authProvider.currentUserId!,
-            token,
+        try {
+          final token = await _notificationService.getFCMToken();
+          if (token != null) {
+            // Get user type for database save
+            String? userType;
+            if (authProvider.userType != null) {
+              final type = authProvider.userType!;
+              userType = (type == UserType.teacher || type == UserType.admin)
+                  ? 'staff'
+                  : 'student';
+            }
+            await _notificationService.saveFCMTokenToUser(
+              authProvider.currentUserId!,
+              token,
+              userType: userType,
+            );
+          } else {
+            debugPrint(
+              'NotificationProvider: FCM token not available. '
+              'Push notifications will not work, but WebSocket messaging will still function.',
+            );
+          }
+        } catch (e) {
+          debugPrint(
+            'NotificationProvider: Error getting FCM token: $e. '
+            'App will continue to work with WebSocket messaging.',
           );
+          // Don't throw - app should work even without FCM
         }
 
         // Start listening for messages
@@ -46,13 +68,35 @@ class NotificationProvider with ChangeNotifier {
     _authProvider = authProvider;
 
     if (authProvider.isAuthenticated && authProvider.currentUserId != null) {
-      // Save FCM token
-      final token = await _notificationService.getFCMToken();
-      if (token != null) {
-        await _notificationService.saveFCMTokenToUser(
-          authProvider.currentUserId!,
-          token,
+      // Save FCM token (non-blocking - app works even if FCM fails)
+      try {
+        final token = await _notificationService.getFCMToken();
+        if (token != null) {
+          // Get user type for database save
+          String? userType;
+          if (authProvider.userType != null) {
+            final type = authProvider.userType!;
+            userType = (type == UserType.teacher || type == UserType.admin)
+                ? 'staff'
+                : 'student';
+          }
+          await _notificationService.saveFCMTokenToUser(
+            authProvider.currentUserId!,
+            token,
+            userType: userType,
+          );
+        } else {
+          debugPrint(
+            'NotificationProvider: FCM token not available. '
+            'Push notifications will not work, but WebSocket messaging will still function.',
+          );
+        }
+      } catch (e) {
+        debugPrint(
+          'NotificationProvider: Error getting FCM token: $e. '
+          'App will continue to work with WebSocket messaging.',
         );
+        // Don't throw - app should work even without FCM
       }
 
       // Start listening for messages

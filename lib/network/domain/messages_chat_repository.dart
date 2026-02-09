@@ -343,4 +343,84 @@ class MessagesChatRepository {
       return {'success': false, 'error': 'Unexpected error: ${e.toString()}'};
     }
   }
+
+  /// Save FCM token to database for a chat user
+  ///
+  /// [userId] - The user ID (staff_id or student_id)
+  /// [userType] - The user type ('staff' or 'student')
+  /// [fcmToken] - The FCM token to save
+  ///
+  /// Returns a Map containing:
+  /// - 'success': bool indicating if the operation was successful
+  /// - 'error': String? error message if failed
+  static Future<Map<String, dynamic>> saveFCMToken({
+    required String userId,
+    required String userType,
+    required String fcmToken,
+  }) async {
+    try {
+      debugPrint(
+        'MessagesChatRepository: Saving FCM token - userId: $userId, userType: $userType',
+      );
+
+      // Validate userType
+      if (userType != 'staff' && userType != 'student') {
+        return {
+          'success': false,
+          'error': 'Invalid user_type. Must be "staff" or "student"',
+        };
+      }
+
+      // Call the HTTP API endpoint
+      final response = await ApiClient.post(
+        endpoint: '/mobile_apis/save_fcm_token.php',
+        body: {'user_id': userId, 'user_type': userType, 'fcm_token': fcmToken},
+      );
+
+      debugPrint('MessagesChatRepository: FCM token save response: $response');
+
+      // Check if we got an HTML response (login page redirect)
+      if (response.containsKey('raw')) {
+        final rawBody = response['raw'] as String?;
+        if (rawBody != null &&
+            (rawBody.contains('<!DOCTYPE html>') ||
+                rawBody.contains('<html') ||
+                rawBody.contains('User Login') ||
+                rawBody.contains('Login : GCSE With Rosi'))) {
+          debugPrint(
+            'MessagesChatRepository: Received HTML login page - endpoint may require authentication',
+          );
+          return {
+            'success': false,
+            'error':
+                'API endpoint requires authentication. Please ensure you are logged in.',
+          };
+        }
+      }
+
+      // Check if the response indicates success
+      if (response['status'] == 'success' ||
+          response['success'] == true ||
+          response['message'] == 'FCM token saved successfully') {
+        return {'success': true};
+      } else {
+        // Handle error response
+        final errorMessage =
+            response['message'] ??
+            response['error'] ??
+            'Failed to save FCM token';
+        return {'success': false, 'error': errorMessage.toString()};
+      }
+    } on ApiException catch (e) {
+      debugPrint(
+        'MessagesChatRepository: ApiException saving FCM token: ${e.message}',
+      );
+      return {'success': false, 'error': e.message};
+    } catch (e) {
+      debugPrint(
+        'MessagesChatRepository: Unexpected error saving FCM token: $e',
+      );
+      return {'success': false, 'error': 'Unexpected error: ${e.toString()}'};
+    }
+  }
 }

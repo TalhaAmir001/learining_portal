@@ -261,6 +261,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         // Refresh inbox to show new messages
         inboxProvider.refreshChats();
       };
+
+      // Ensure WebSocket is connected if user is already authenticated (app restart)
+      if (authProvider.isAuthenticated) {
+        debugPrint(
+          'Main: User is authenticated, ensuring WebSocket connection',
+        );
+        authProvider.ensureWebSocketConnection().catchError((error) {
+          debugPrint(
+            'Main: Error ensuring WebSocket connection on startup: $error',
+          );
+        });
+      }
     });
   }
 

@@ -14,6 +14,7 @@ import 'package:learining_portal/main.dart';
 import 'package:learining_portal/screens/messages/chat.dart';
 import 'package:provider/provider.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 
 // Top-level function to handle background messages
 @pragma('vm:entry-point')
@@ -126,7 +127,8 @@ class NotificationService {
         debugPrint(
           'User declined or has not accepted notification permissions',
         );
-        return;
+        // Continue initialization even without permission
+        // FCM token might still be obtainable, and WebSocket will still work
       }
 
       // Initialize local notifications for Android
@@ -204,28 +206,109 @@ class NotificationService {
   // Get FCM token and save to user document
   Future<String?> getFCMToken() async {
     try {
+      // Check if Firebase Messaging is available
       final token = await _firebaseMessaging.getToken();
-      debugPrint('FCM Token: $token');
-      return token;
+      if (token != null && token.isNotEmpty) {
+        debugPrint('FCM Token obtained: ${token.substring(0, 20)}...');
+        return token;
+      } else {
+        debugPrint('FCM Token is null or empty');
+        return null;
+      }
+    } on FirebaseException catch (e) {
+      debugPrint('Firebase error getting FCM token: ${e.code} - ${e.message}');
+
+      // Handle specific error codes
+      if (e.code == 'unknown' ||
+          e.message?.contains('MISSING_INSTANCEID_SERVICE') == true) {
+        debugPrint(
+          'FCM Error: Google Play Services may not be available. '
+          'This can happen on emulators without Google Play Services or devices without Google Play Store.',
+        );
+      }
+
+      return null;
     } catch (e) {
       debugPrint('Error getting FCM token: $e');
+      // Check if it's the specific error
+      if (e.toString().contains('MISSING_INSTANCEID_SERVICE')) {
+        debugPrint(
+          'FCM Error: MISSING_INSTANCEID_SERVICE - '
+          'Google Play Services is required for FCM. '
+          'Ensure you are running on a device/emulator with Google Play Services installed.',
+        );
+      }
       return null;
     }
   }
 
-  // Save FCM token to user document
-  Future<void> saveFCMTokenToUser(String userId, String? token) async {
+  // Save FCM token to user document (Firestore and Database)
+  Future<void> saveFCMTokenToUser(
+    String userId,
+    String? token, {
+    String? userType,
+  }) async {
     if (token == null || userId.isEmpty) return;
 
     try {
+      // Save to Firestore
       await _firestore.collection('user').doc(userId).update({
         'fcmToken': token,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
       });
-      debugPrint('FCM token saved for user: $userId');
+      debugPrint('FCM token saved to Firestore for user: $userId');
+
+      // Also save to MySQL database via API
+      try {
+        if (userType != null) {
+          // Use provided user type
+          final result = await MessagesChatRepository.saveFCMToken(
+            userId: userId,
+            userType: userType,
+            fcmToken: token,
+          );
+          if (result['success'] == true) {
+            debugPrint(
+              'FCM token saved to database for user: $userId (type: $userType)',
+            );
+          } else {
+            debugPrint(
+              'Failed to save FCM token to database: ${result['error']}',
+            );
+          }
+        } else {
+          // Try both types if user type not provided
+          await _saveFCMTokenToDatabase(userId, token);
+        }
+      } catch (e) {
+        debugPrint('Error saving FCM token to database: $e');
+        // Don't fail if database save fails - Firestore save succeeded
+      }
     } catch (e) {
-      debugPrint('Error saving FCM token: $e');
+      debugPrint('Error saving FCM token to Firestore: $e');
     }
+  }
+
+  // Save FCM token to MySQL database via API
+  Future<void> _saveFCMTokenToDatabase(String userId, String token) async {
+    // Try to determine user type - we'll try both and let the API handle it
+    // Or you can pass user type if available
+    for (final userType in ['staff', 'student']) {
+      final result = await MessagesChatRepository.saveFCMToken(
+        userId: userId,
+        userType: userType,
+        fcmToken: token,
+      );
+
+      if (result['success'] == true) {
+        debugPrint(
+          'FCM token saved to database for user: $userId (type: $userType)',
+        );
+        return; // Success, exit
+      }
+    }
+
+    debugPrint('Failed to save FCM token to database for user: $userId');
   }
 
   // Start listening for new messages
