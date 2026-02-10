@@ -6,3 +6,6 @@ final FirebaseFirestore firestore = FirebaseFirestore.instance;
 
 /// Shared Firebase Auth instance for the entire app
 final FirebaseAuth firebaseAuth = FirebaseAuth.instance;
+
+/// Virtual Support user ID (staff_id = 0 in backend). Students and teachers chat only with Support; any admin can reply.
+const String supportUserId = '0';

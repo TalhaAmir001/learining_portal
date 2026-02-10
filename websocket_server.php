@@ -32,14 +32,19 @@ require __DIR__ . '/fcm_notification_helper.php';
 
 class ChatWebSocketServer implements MessageComponentInterface
 {
+    /** Virtual Support user: staff_id = 0 in fl_chat_users. Students/teachers chat with Support; any admin can reply. */
+    const SUPPORT_STAFF_ID = 0;
+
     protected $clients;
     protected $users; // Map user_id to connection
+    protected $staffConnections; // All staff (admin) connections for broadcasting Support messages
     protected $fcmHelper; // FCM notification helper
 
     public function __construct()
     {
         $this->clients = new \SplObjectStorage;
         $this->users = [];
+        $this->staffConnections = new \SplObjectStorage;
         $this->fcmHelper = new FCMNotificationHelper();
     }
 
@@ -75,12 +80,15 @@ class ChatWebSocketServer implements MessageComponentInterface
                 $user_id = $data['user_id'] ?? null;
                 $user_type = $data['user_type'] ?? 'staff';
 
-                if ($user_id) {
+                if ($user_id !== null && $user_id !== '') {
                     $this->users[$user_id] = $from;
                     $from->user_id = $user_id;
                     $from->user_type = $user_type;
+                    if ($user_type === 'staff') {
+                        $this->staffConnections->attach($from);
+                    }
 
-                    echo "User {$user_id} connected\n";
+                    echo "User {$user_id} ({$user_type}) connected\n";
 
                     // Send confirmation
                     $from->send(json_encode([
@@ -99,87 +107,136 @@ class ChatWebSocketServer implements MessageComponentInterface
                 // Get user_type from connection object (stored during connect) or from data
                 $user_type = isset($from->user_type) ? $from->user_type : ($data['user_type'] ?? 'staff');
 
-                if ($chat_connection_id && $message && $sender_id) {
-                    // Get sender's chat_user_id from fl_chat_users table
-                    $sender_chat_user_id = $this->getChatUserId($sender_id, $user_type);
+                if ($chat_connection_id && $message && $sender_id !== null) {
+                    try {
+                        $support_chat_user_id = $this->getSupportChatUserId();
+                        $sender_chat_user_id = $this->getChatUserId($sender_id, $user_type);
 
-                    if (!$sender_chat_user_id) {
-                        $from->send(json_encode([
-                            'action' => 'error',
-                            'message' => 'Sender chat_user_id not found. Please ensure user exists in fl_chat_users table.'
-                        ]));
-                        break;
-                    }
+                        // Support conversation: admin may send on behalf of Support (connection is student/teacher <-> Support)
+                        $connection_is_support = $this->connectionContainsSupport($chat_connection_id, $support_chat_user_id);
+                        $admin_replying_as_support = $connection_is_support && $user_type === 'staff' && $sender_chat_user_id && (int)$sender_chat_user_id !== (int)$support_chat_user_id;
 
-                    // Get receiver's chat_user_id from chat_connection
-                    $receiver_chat_user_id = $this->getReceiverChatUserId($chat_connection_id, $sender_chat_user_id);
-
-                    if (!$receiver_chat_user_id) {
-                        $from->send(json_encode([
-                            'action' => 'error',
-                            'message' => 'Receiver chat_user_id not found. Invalid chat_connection_id.'
-                        ]));
-                        break;
-                    }
-
-                    // Get client IP address
-                    $client_ip = $this->getClientIp($from);
-
-                    // Prepare data for saving
-                    $message_data = [
-                        'chat_connection_id' => $chat_connection_id,
-                        'chat_user_id' => $receiver_chat_user_id, // Receiver's chat_user_id
-                        'message' => $message,
-                        'ip' => $client_ip,
-                        'time' => time()
-                    ];
-
-                    // Save message to database
-                    $message_id = $this->saveMessage($message_data);
-
-                    if ($message_id) {
-                        // Get receiver's actual user_id (staff_id/student_id) for broadcasting
-                        $receiver_user_id = $this->getReceiverUserId($chat_connection_id, $sender_chat_user_id);
-                        $receiver_user_type = $this->getReceiverUserType($chat_connection_id, $sender_chat_user_id);
-
-                        // Broadcast to receiver if connected via WebSocket
-                        if ($receiver_user_id && isset($this->users[$receiver_user_id])) {
-                            $this->users[$receiver_user_id]->send(json_encode([
-                                'action' => 'new_message',
-                                'message_id' => $message_id,
-                                'chat_connection_id' => $chat_connection_id,
-                                'chat_user_id' => $receiver_chat_user_id,
-                                'message' => $message,
-                                'sender_id' => $sender_id,
-                                'created_at' => date('Y-m-d H:i:s')
-                            ]));
-                            echo "Message delivered via WebSocket to user $receiver_user_id\n";
+                        if ($admin_replying_as_support) {
+                            // Admin replying in support thread: treat sender as Support, receiver as student/teacher
+                            $effective_sender_chat_user_id = $support_chat_user_id;
+                            $effective_receiver_chat_user_id = $this->getOtherPartyInConnection($chat_connection_id, $support_chat_user_id);
                         } else {
-                            // Receiver not connected via WebSocket - send FCM notification
-                            // This handles cases where app is closed or in background
-                            if ($receiver_user_id && $receiver_user_type) {
-                                echo "Receiver $receiver_user_id not connected via WebSocket, sending FCM notification...\n";
+                            $effective_sender_chat_user_id = $sender_chat_user_id;
+                            $effective_receiver_chat_user_id = $sender_chat_user_id ? $this->getReceiverChatUserId($chat_connection_id, $sender_chat_user_id) : null;
+                        }
+
+                        if (!$effective_sender_chat_user_id || !$effective_receiver_chat_user_id) {
+                            if (!$admin_replying_as_support && !$sender_chat_user_id) {
+                                $from->send(json_encode([
+                                    'action' => 'error',
+                                    'message' => 'Sender chat_user_id not found. Please ensure user exists in fl_chat_users table.'
+                                ]));
+                                echo "send_message: error - sender chat_user_id not found\n";
+                                break;
+                            }
+                            $from->send(json_encode([
+                                'action' => 'error',
+                                'message' => 'Receiver chat_user_id not found. Invalid chat_connection_id.'
+                            ]));
+                            echo "send_message: error - receiver chat_user_id not found\n";
+                            break;
+                        }
+
+                        echo "send_message: effective_sender=$effective_sender_chat_user_id, effective_receiver=$effective_receiver_chat_user_id (connection_id=$chat_connection_id)\n";
+                        @ob_flush(); @flush();
+
+                        $client_ip = $this->getClientIp($from);
+                        $message_data = [
+                            'chat_connection_id' => $chat_connection_id,
+                            'chat_user_id' => $effective_receiver_chat_user_id,
+                            'message' => $message,
+                            'ip' => $client_ip,
+                            'time' => time()
+                        ];
+
+                        $message_id = $this->saveMessage($message_data);
+                        echo "send_message: message_id=" . ($message_id ?: 'null') . "\n";
+                        @ob_flush(); @flush();
+
+                        if ($message_id) {
+                            $receiver_user_id = $this->getReceiverUserIdFromChatUserId($chat_connection_id, $effective_receiver_chat_user_id);
+                            $receiver_user_type = $this->getReceiverUserTypeFromChatUserId($effective_receiver_chat_user_id);
+                            $sender_id_for_delivery = $admin_replying_as_support ? (string) self::SUPPORT_STAFF_ID : $sender_id;
+                            echo "send_message: receiver_user_id=$receiver_user_id, receiver_user_type=$receiver_user_type\n";
+                            @ob_flush(); @flush();
+
+                            // Deliver: if receiver is Support (staff_id=0), broadcast to all staff; else single user
+                            if ($receiver_user_id !== null && (int)$receiver_user_id !== (int) self::SUPPORT_STAFF_ID && isset($this->users[$receiver_user_id])) {
+                                try {
+                                    $this->users[$receiver_user_id]->send(json_encode([
+                                        'action' => 'new_message',
+                                        'message_id' => $message_id,
+                                        'chat_connection_id' => $chat_connection_id,
+                                        'chat_user_id' => $effective_receiver_chat_user_id,
+                                        'message' => $message,
+                                        'sender_id' => $sender_id_for_delivery,
+                                        'created_at' => date('Y-m-d H:i:s')
+                                    ]));
+                                    echo "Message delivered via WebSocket to user $receiver_user_id\n";
+                                } catch (\Exception $e) {
+                                    echo "WebSocket send failed for user $receiver_user_id: {$e->getMessage()}, removing from users\n";
+                                    unset($this->users[$receiver_user_id]);
+                                }
+                            } elseif ($receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
+                                foreach ($this->staffConnections as $staffConn) {
+                                    try {
+                                        $staffConn->send(json_encode([
+                                            'action' => 'new_message',
+                                            'message_id' => $message_id,
+                                            'chat_connection_id' => $chat_connection_id,
+                                            'chat_user_id' => $effective_receiver_chat_user_id,
+                                            'message' => $message,
+                                            'sender_id' => $sender_id,
+                                            'created_at' => date('Y-m-d H:i:s')
+                                        ]));
+                                    } catch (\Exception $e) {
+                                        // ignore per-connection errors
+                                    }
+                                }
+                                echo "Message broadcast to " . $this->staffConnections->count() . " staff (Support inbox)\n";
+                            } else {
+                                echo "Receiver $receiver_user_id not in WebSocket users\n";
+                            }
+
+                            if ($receiver_user_id && $receiver_user_type && (int)$receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
+                                echo "Sending FCM notification to receiver $receiver_user_id...\n";
+                                @ob_flush(); @flush();
                                 $this->fcmHelper->sendMessageNotification(
                                     $receiver_user_id,
                                     $receiver_user_type,
-                                    $sender_id,
-                                    $user_type,
+                                    $sender_id_for_delivery,
+                                    $admin_replying_as_support ? 'staff' : $user_type,
                                     $message,
                                     $chat_connection_id
                                 );
+                                echo "FCM sendMessageNotification completed for receiver $receiver_user_id\n";
+                            } else {
+                                echo "send_message: skip FCM - receiver is Support or missing\n";
                             }
-                        }
 
-                        // Confirm to sender
-                        $from->send(json_encode([
-                            'action' => 'message_sent',
-                            'message_id' => $message_id,
-                            'status' => 'success'
-                        ]));
-                    } else {
+                            $from->send(json_encode([
+                                'action' => 'message_sent',
+                                'message_id' => $message_id,
+                                'status' => 'success'
+                            ]));
+                        } else {
+                            $from->send(json_encode([
+                                'action' => 'error',
+                                'message' => 'Failed to save message to database'
+                            ]));
+                            echo "send_message: error - saveMessage returned no message_id\n";
+                        }
+                    } catch (\Throwable $e) {
+                        echo "send_message exception: " . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n";
+                        @ob_flush(); @flush();
                         $from->send(json_encode([
                             'action' => 'error',
-                            'message' => 'Failed to save message to database'
+                            'message' => 'Server error: ' . $e->getMessage()
                         ]));
                     }
                 } else {
@@ -205,13 +262,19 @@ class ChatWebSocketServer implements MessageComponentInterface
                     ]));
                 }
                 break;
+            case 'create_chat_user':
+                echo "=== CREATE_CHAT_USER REQUEST RECEIVED ===\n";
+                echo "Full data: " . json_encode($data) . "\n";
 
-            case 'get_connections':
-                // Get all chat connections for a user
-                $user_id = $data['user_id'] ?? null;
-                $user_type = isset($from->user_type) ? $from->user_type : ($data['user_type'] ?? 'staff');
+                // Handle both string and integer user_id
+                $user_id_raw = $data['user_id'] ?? null;
+                $user_id = $user_id_raw !== null ? intval($user_id_raw) : null;
+                $user_type = isset($data['user_type']) ? trim($data['user_type']) : 'staff';
+
+                echo "Processing: user_id={$user_id} (raw: " . var_export($user_id_raw, true) . "), user_type='{$user_type}'\n";
 
                 if (!$user_id) {
+                    echo "Error: Missing user_id\n";
                     $from->send(json_encode([
                         'action' => 'error',
                         'message' => 'Missing user_id'
@@ -219,127 +282,63 @@ class ChatWebSocketServer implements MessageComponentInterface
                     break;
                 }
 
-                // Get user's chat_user_id
+                if (!in_array($user_type, ['staff', 'student'])) {
+                    echo "Error: Invalid user_type={$user_type}\n";
+                    $from->send(json_encode([
+                        'action' => 'error',
+                        'message' => 'Invalid user_type. Must be "staff" or "student"'
+                    ]));
+                    break;
+                }
+
+                // Check if chat user already exists
+                echo "Checking if chat user exists...\n";
                 $chat_user_id = $this->getChatUserId($user_id, $user_type);
+                $is_new = false;
+
                 if (!$chat_user_id) {
-                    $from->send(json_encode([
-                        'action' => 'connections',
-                        'status' => 'success',
-                        'connections' => []
-                    ]));
-                    break;
-                }
-
-                // Get all connections for this chat_user_id
-                $connections = $this->getUserConnections($chat_user_id);
-                
-                $from->send(json_encode([
-                    'action' => 'connections',
-                    'status' => 'success',
-                    'connections' => $connections
-                ]));
-                break;
-
-            case 'create_connection':
-                // Create a chat connection between two users
-                $user_one_id = $data['user_one_id'] ?? null;
-                $user_one_type = $data['user_one_type'] ?? 'staff';
-                $user_two_id = $data['user_two_id'] ?? null;
-                $user_two_type = $data['user_two_type'] ?? 'student';
-
-                if (!$user_one_id || !$user_two_id) {
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Missing user_one_id or user_two_id'
-                    ]));
-                    break;
-                }
-
-                // Ensure both users exist in fl_chat_users
-                echo "Creating connection: user_one_id={$user_one_id} (type: {$user_one_type}), user_two_id={$user_two_id} (type: {$user_two_type})\n";
-                
-                $chat_user_one_id = $this->getChatUserId($user_one_id, $user_one_type);
-                if (!$chat_user_one_id) {
-                    echo "Chat user one not found, creating...\n";
-                    // Try to create it
-                    $chat_user_one_id = $this->createChatUser($user_one_id, $user_one_type);
-                    if (!$chat_user_one_id) {
-                        echo "Failed to create chat user one\n";
-                        $from->send(json_encode([
-                            'action' => 'error',
-                            'message' => 'Failed to get or create chat user for user_one_id: ' . $user_one_id
-                        ]));
-                        break;
-                    }
-                }
-                echo "Chat user one ID: {$chat_user_one_id}\n";
-
-                $chat_user_two_id = $this->getChatUserId($user_two_id, $user_two_type);
-                if (!$chat_user_two_id) {
-                    echo "Chat user two not found, creating...\n";
-                    // Try to create it
-                    $chat_user_two_id = $this->createChatUser($user_two_id, $user_two_type);
-                    if (!$chat_user_two_id) {
-                        echo "Failed to create chat user two\n";
-                        $from->send(json_encode([
-                            'action' => 'error',
-                            'message' => 'Failed to get or create chat user for user_two_id: ' . $user_two_id
-                        ]));
-                        break;
-                    }
-                }
-                echo "Chat user two ID: {$chat_user_two_id}\n";
-
-                // Verify both chat_user_ids exist in the database
-                if (!$this->verifyChatUserExists($chat_user_one_id)) {
-                    echo "ERROR: chat_user_one_id {$chat_user_one_id} does not exist in fl_chat_users table\n";
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Chat user one does not exist in database: ' . $chat_user_one_id
-                    ]));
-                    break;
-                }
-
-                if (!$this->verifyChatUserExists($chat_user_two_id)) {
-                    echo "ERROR: chat_user_two_id {$chat_user_two_id} does not exist in fl_chat_users table\n";
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Chat user two does not exist in database: ' . $chat_user_two_id
-                    ]));
-                    break;
-                }
-
-                // Check if connection already exists
-                $existing_connection = $this->getConnectionBetweenUsers($chat_user_one_id, $chat_user_two_id);
-                if ($existing_connection) {
-                    echo "Connection already exists: {$existing_connection}\n";
-                    $from->send(json_encode([
-                        'action' => 'connection_created',
-                        'status' => 'success',
-                        'connection_id' => $existing_connection,
-                        'is_new' => false
-                    ]));
-                    break;
-                }
-
-                // Create new connection
-                echo "Creating new connection between chat_user_one_id={$chat_user_one_id} and chat_user_two_id={$chat_user_two_id}\n";
-                $connection_id = $this->createChatConnection($chat_user_one_id, $chat_user_two_id);
-                if ($connection_id) {
-                    echo "Connection created successfully: {$connection_id}\n";
-                    $from->send(json_encode([
-                        'action' => 'connection_created',
-                        'status' => 'success',
-                        'connection_id' => $connection_id,
-                        'is_new' => true
-                    ]));
+                    echo "Chat user not found, creating new entry...\n";
+                    // Create new chat user entry
+                    $chat_user_id = $this->createChatUser($user_id, $user_type);
+                    $is_new = true;
+                    echo "createChatUser returned: " . ($chat_user_id ? $chat_user_id : 'null') . "\n";
                 } else {
-                    echo "Failed to create connection\n";
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Failed to create chat connection. Check database foreign key constraints.'
-                    ]));
+                    echo "Chat user already exists with ID: {$chat_user_id}\n";
                 }
+
+                if ($chat_user_id) {
+                    $response = [
+                        'action' => 'chat_user_created',
+                        'chat_user_id' => $chat_user_id,
+                        'is_new' => $is_new,
+                        'status' => 'success'
+                    ];
+                    $response_json = json_encode($response);
+                    echo "Sending success response: {$response_json}\n";
+
+                    try {
+                        $from->send($response_json);
+                        echo "✓ Response sent successfully\n";
+                        echo "Chat user " . ($is_new ? "created" : "verified") . " for user {$user_id} ({$user_type}) with chat_user_id: {$chat_user_id}\n";
+                    } catch (\Exception $e) {
+                        echo "✗ ERROR sending response: " . $e->getMessage() . "\n";
+                        echo "Exception trace: " . $e->getTraceAsString() . "\n";
+                    }
+                } else {
+                    echo "✗ Error: Failed to create/get chat user entry\n";
+                    $error_response = json_encode([
+                        'action' => 'error',
+                        'message' => 'Failed to create chat user entry. Check database connection and table structure.'
+                    ]);
+                    echo "Sending error response: {$error_response}\n";
+                    try {
+                        $from->send($error_response);
+                        echo "✓ Error response sent\n";
+                    } catch (\Exception $e) {
+                        echo "✗ ERROR sending error response: " . $e->getMessage() . "\n";
+                    }
+                }
+                echo "=== CREATE_CHAT_USER REQUEST COMPLETED ===\n\n";
                 break;
 
             default:
@@ -351,6 +350,35 @@ class ChatWebSocketServer implements MessageComponentInterface
                 ]));
                 break;
         }
+    }
+
+    /**
+     * Get receiver's user_type for FCM notifications
+     */
+    private function getReceiverUserType($chat_connection_id, $sender_chat_user_id)
+    {
+        $receiver_chat_user_id = $this->getReceiverChatUserId($chat_connection_id, $sender_chat_user_id);
+        if (!$receiver_chat_user_id) {
+            return null;
+        }
+
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return null;
+        }
+
+        $receiver_chat_user_id = $mysqli->real_escape_string($receiver_chat_user_id);
+        $sql = "SELECT user_type FROM fl_chat_users WHERE id = '$receiver_chat_user_id' LIMIT 1";
+        $result = $mysqli->query($sql);
+
+        if ($result && $row = $result->fetch_assoc()) {
+            $user_type = $row['user_type'];
+            $mysqli->close();
+            return $user_type;
+        }
+
+        $mysqli->close();
+        return null;
     }
 
     private function createChatUser($user_id, $user_type = 'staff')
@@ -399,6 +427,7 @@ class ChatWebSocketServer implements MessageComponentInterface
     public function onClose(ConnectionInterface $conn)
     {
         $this->clients->detach($conn);
+        $this->staffConnections->detach($conn);
 
         // Remove user from users array
         if (isset($conn->user_id)) {
@@ -540,6 +569,99 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
+     * Get Support (virtual) chat_user_id (staff_id = 0, user_type = staff)
+     */
+    private function getSupportChatUserId()
+    {
+        return $this->getChatUserId((string) self::SUPPORT_STAFF_ID, 'staff');
+    }
+
+    /**
+     * Check if a connection involves the Support chat user
+     */
+    private function connectionContainsSupport($chat_connection_id, $support_chat_user_id)
+    {
+        if (!$support_chat_user_id) {
+            return false;
+        }
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return false;
+        }
+        $chat_connection_id = $mysqli->real_escape_string($chat_connection_id);
+        $support_chat_user_id = $mysqli->real_escape_string($support_chat_user_id);
+        $sql = "SELECT id FROM fl_chat_connections WHERE id = '$chat_connection_id' AND (chat_user_one = '$support_chat_user_id' OR chat_user_two = '$support_chat_user_id') LIMIT 1";
+        $result = $mysqli->query($sql);
+        $has = $result && $result->num_rows > 0;
+        $mysqli->close();
+        return $has;
+    }
+
+    /**
+     * Get the other party's chat_user_id in a connection (given one side)
+     */
+    private function getOtherPartyInConnection($chat_connection_id, $one_chat_user_id)
+    {
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return null;
+        }
+        $chat_connection_id = $mysqli->real_escape_string($chat_connection_id);
+        $one_chat_user_id = $mysqli->real_escape_string($one_chat_user_id);
+        $sql = "SELECT chat_user_one, chat_user_two FROM fl_chat_connections WHERE id = '$chat_connection_id' LIMIT 1";
+        $result = $mysqli->query($sql);
+        if (!$result || !$row = $result->fetch_assoc()) {
+            $mysqli->close();
+            return null;
+        }
+        $other = ($row['chat_user_one'] == $one_chat_user_id) ? $row['chat_user_two'] : $row['chat_user_one'];
+        $mysqli->close();
+        return $other;
+    }
+
+    /**
+     * Get receiver's actual user_id (staff_id/student_id) when we know receiver's chat_user_id
+     */
+    private function getReceiverUserIdFromChatUserId($chat_connection_id, $receiver_chat_user_id)
+    {
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return null;
+        }
+        $receiver_chat_user_id = $mysqli->real_escape_string($receiver_chat_user_id);
+        $sql = "SELECT staff_id, student_id FROM fl_chat_users WHERE id = '$receiver_chat_user_id' LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $user_id = $row['staff_id'] !== null ? $row['staff_id'] : $row['student_id'];
+            $mysqli->close();
+            return $user_id !== null ? (string) $user_id : null;
+        }
+        $mysqli->close();
+        return null;
+    }
+
+    /**
+     * Get user_type for a chat_user_id
+     */
+    private function getReceiverUserTypeFromChatUserId($chat_user_id)
+    {
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return null;
+        }
+        $chat_user_id = $mysqli->real_escape_string($chat_user_id);
+        $sql = "SELECT user_type FROM fl_chat_users WHERE id = '$chat_user_id' LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $ut = $row['user_type'];
+            $mysqli->close();
+            return $ut;
+        }
+        $mysqli->close();
+        return null;
+    }
+
+    /**
      * Get receiver's chat_user_id from chat_connection
      */
     private function getReceiverChatUserId($chat_connection_id, $sender_chat_user_id)
@@ -590,35 +712,6 @@ class ChatWebSocketServer implements MessageComponentInterface
             $user_id = $row['staff_id'] ? $row['staff_id'] : $row['student_id'];
             $mysqli->close();
             return $user_id;
-        }
-
-        $mysqli->close();
-        return null;
-    }
-
-    /**
-     * Get receiver's user_type for FCM notifications
-     */
-    private function getReceiverUserType($chat_connection_id, $sender_chat_user_id)
-    {
-        $receiver_chat_user_id = $this->getReceiverChatUserId($chat_connection_id, $sender_chat_user_id);
-        if (!$receiver_chat_user_id) {
-            return null;
-        }
-
-        $mysqli = $this->getDbConnection();
-        if (!$mysqli) {
-            return null;
-        }
-
-        $receiver_chat_user_id = $mysqli->real_escape_string($receiver_chat_user_id);
-        $sql = "SELECT user_type FROM fl_chat_users WHERE id = '$receiver_chat_user_id' LIMIT 1";
-        $result = $mysqli->query($sql);
-
-        if ($result && $row = $result->fetch_assoc()) {
-            $user_type = $row['user_type'];
-            $mysqli->close();
-            return $user_type;
         }
 
         $mysqli->close();
@@ -916,3 +1009,6 @@ $server = IoServer::factory(
 echo "WebSocket server started on port {$port}\n";
 echo "Connect to: ws://localhost:{$port}\n";
 $server->run();
+
+
+//retrieve lists from REST and use websocket to only listen data changes

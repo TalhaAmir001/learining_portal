@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:learining_portal/models/message_model.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 
@@ -241,18 +242,25 @@ class ChatProvider with ChangeNotifier {
         return null;
       }
 
-      // Determine other user type (opposite of current user type)
-      final otherUserType = userType == 'staff' ? 'student' : 'staff';
+      // Support user (uid 0) is always staff. Otherwise opposite of current user type.
+      final otherUserType = otherUserId == supportUserId
+          ? 'staff'
+          : (userType == 'staff' ? 'student' : 'staff');
+
+      // Admin opening a support thread: connection is Support <-> other user (student/teacher)
+      final isAdminOpeningSupport = authProvider?.userType == UserType.admin && otherUserId != supportUserId;
+      final userOneId = isAdminOpeningSupport ? supportUserId : apiUserId;
+      final userOneType = isAdminOpeningSupport ? 'staff' : userType;
 
       // Get connection via HTTP API
       try {
         debugPrint(
-          'ChatProvider: Requesting connection via HTTP API for users: $apiUserId ($userType) <-> $otherUserId ($otherUserType)',
+          'ChatProvider: Requesting connection via HTTP API for users: $userOneId ($userOneType) <-> $otherUserId ($otherUserType)',
         );
 
         final result = await MessagesChatRepository.getConnection(
-          userOneId: apiUserId,
-          userOneType: userType,
+          userOneId: userOneId,
+          userOneType: userOneType,
           userTwoId: otherUserId,
           userTwoType: otherUserType,
         );
@@ -286,13 +294,13 @@ class ChatProvider with ChangeNotifier {
       );
       try {
         debugPrint(
-          'ChatProvider: Creating connection via HTTP API: $apiUserId ($userType) <-> $otherUserId ($otherUserType)',
+          'ChatProvider: Creating connection via HTTP API: $userOneId ($userOneType) <-> $otherUserId ($otherUserType)',
         );
 
         // Use HTTP API to create connection
         final result = await MessagesChatRepository.createConnection(
-          userOneId: apiUserId,
-          userOneType: userType,
+          userOneId: userOneId,
+          userOneType: userOneType,
           userTwoId: otherUserId,
           userTwoType: otherUserType,
         );

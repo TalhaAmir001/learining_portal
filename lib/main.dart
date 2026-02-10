@@ -255,11 +255,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       notificationProvider.initialize(authProvider);
 
-      // Set up WebSocket message listener to refresh inbox when new messages arrive
+      // Set up WebSocket message listener to refresh inbox and show notification when new messages arrive
       authProvider.onNewMessageReceived = (messageData) {
         debugPrint('Main: New message received, refreshing inbox');
         // Refresh inbox to show new messages
         inboxProvider.refreshChats();
+        // Show local notification if user is not viewing this chat
+        notificationProvider.showNotificationForIncomingMessage(messageData);
       };
 
       // Ensure WebSocket is connected if user is already authenticated (app restart)
@@ -286,6 +288,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final notificationProvider = Provider.of<NotificationProvider>(
+      context,
+      listen: false,
+    );
 
     if (state == AppLifecycleState.resumed) {
       // App came to foreground - ensure WebSocket is connected
@@ -294,6 +300,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         authProvider.ensureWebSocketConnection().catchError((error) {
           debugPrint('Main: Error ensuring WebSocket connection: $error');
         });
+        // Refresh FCM token in database so server can send push when app is closed
+        notificationProvider
+            .refreshFCMTokenInDatabase(authProvider)
+            .catchError((error) {
+          debugPrint('Main: Error refreshing FCM token: $error');
+        });
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // App going to background - disconnect WebSocket so server sends FCM
+      if (authProvider.isAuthenticated) {
+        debugPrint(
+          'Main: App going to background, disconnecting WebSocket so server uses FCM',
+        );
+        authProvider.disconnectWebSocketForBackground();
       }
     }
   }

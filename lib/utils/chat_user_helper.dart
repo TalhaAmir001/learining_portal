@@ -26,36 +26,6 @@ class ChatUserHelper {
       // Set up a completer to wait for the response
       final completer = Completer<bool>();
 
-      // Set up callback for chat user creation
-      // wsClient.onChatUserCreated = (data) {
-      //   debugPrint(
-      //     'ChatUserHelper: onChatUserCreated callback triggered with data: $data',
-      //   );
-      //   final status = data['status'] as String?;
-      //   final chatUserId = data['chat_user_id'];
-      //   final isNew = data['is_new'] as bool? ?? false;
-      //
-      //   debugPrint(
-      //     'ChatUserHelper: Parsed - status: $status, chatUserId: $chatUserId, isNew: $isNew',
-      //   );
-      //
-      //   if (status == 'success' && chatUserId != null) {
-      //     debugPrint(
-      //       'ChatUserHelper: Chat user created successfully. ID: $chatUserId, is_new: $isNew',
-      //     );
-      //     if (!completer.isCompleted) {
-      //       completer.complete(true);
-      //     }
-      //   } else {
-      //     debugPrint(
-      //       'ChatUserHelper: Failed to create chat user - status: $status, chatUserId: $chatUserId',
-      //     );
-      //     if (!completer.isCompleted) {
-      //       completer.complete(false);
-      //     }
-      //   }
-      // };
-
       // Set up error callback to handle server errors
       wsClient.onError = (error) {
         debugPrint('ChatUserHelper: WebSocket error: $error');

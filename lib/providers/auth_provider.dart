@@ -371,6 +371,9 @@ class AuthProvider with ChangeNotifier {
   // Ensure WebSocket connection is maintained
   // This can be called periodically or when app comes to foreground
   Future<void> ensureWebSocketConnection() async {
+    // Re-enable maintenance when explicitly ensuring connection (e.g. app resumed)
+    _shouldMaintainConnection = true;
+
     if (!_isAuthenticated || !_shouldMaintainConnection) {
       return;
     }
@@ -385,6 +388,19 @@ class AuthProvider with ChangeNotifier {
       debugPrint('AuthProvider: WebSocket not connected, initializing...');
       await _initializeWebSocket();
     }
+  }
+
+  /// Disconnect WebSocket when app goes to background so the server sends FCM
+  /// instead. When app resumes, call [ensureWebSocketConnection] to reconnect.
+  void disconnectWebSocketForBackground() {
+    if (_wsClient == null || !_wsClient!.isConnected) {
+      return;
+    }
+    debugPrint('AuthProvider: Disconnecting WebSocket for background (server will use FCM)');
+    _shouldMaintainConnection = false;
+    _wsClient!.disconnect();
+    _isWebSocketConnected = false;
+    notifyListeners();
   }
 
   // Disconnect WebSocket (only used when absolutely necessary, like app termination)

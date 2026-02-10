@@ -93,14 +93,20 @@ class InboxProvider with ChangeNotifier {
 
       final userType = _getUserTypeForApi();
 
+      // Admins see Support Inbox (all support conversations). Students/teachers see their own connections (including Support).
+      final inboxUserId = _authProvider!.userType == UserType.admin
+          ? supportUserId
+          : apiUserId;
+      final inboxUserType = userType;
+
       debugPrint(
-        'InboxProvider: Loading connections for user: $apiUserId (type: $userType)',
+        'InboxProvider: Loading connections for user: $inboxUserId (type: $inboxUserType)',
       );
 
       // Get connections from API
       final result = await MessagesChatRepository.getConnections(
-        userId: apiUserId,
-        userType: userType,
+        userId: inboxUserId,
+        userType: inboxUserType,
       );
 
       if (result['success'] != true) {

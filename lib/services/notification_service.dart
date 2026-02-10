@@ -61,12 +61,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       >()
       ?.createNotificationChannel(androidChannel);
 
-  // Show notification
-  if (message.notification != null) {
+  // Show notification only for chat messages (have chatId or notification payload)
+  final chatId = message.data['chatId'] ?? message.data['chat_id'];
+  final title = message.notification?.title ??
+      message.data['title'] ??
+      'New message';
+  final body = message.notification?.body ??
+      message.data['message'] ??
+      message.data['body'] ??
+      'You have a new message';
+
+  if (chatId != null || message.notification != null) {
+    // Use positive id for Android compatibility when app is killed
+    final id = (chatId?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
     await localNotifications.show(
-      id: message.hashCode,
-      title: message.notification?.title ?? 'New Message',
-      body: message.notification?.body ?? '',
+      id: id,
+      title: title,
+      body: body.length > 100 ? '${body.substring(0, 100)}...' : body,
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'messages_channel',
@@ -84,7 +95,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           presentSound: true,
         ),
       ),
-      payload: message.data['chatId'],
+      payload: chatId,
     );
   }
 }
@@ -414,16 +425,25 @@ class NotificationService {
         });
   }
 
-  // Handle foreground messages
+  // Handle foreground messages (app open but may not be on chat screen)
   void _handleForegroundMessage(RemoteMessage message) {
     debugPrint('Received foreground message: ${message.messageId}');
 
-    // Show local notification for foreground messages
-    if (message.notification != null) {
+    // Show local notification (from notification payload or data)
+    final title = message.notification?.title ??
+        message.data['title'] ??
+        'New message';
+    final body = message.notification?.body ??
+        message.data['message'] ??
+        message.data['body'] ??
+        '';
+    final chatId = message.data['chatId'] ?? message.data['chat_id'];
+
+    if (title.isNotEmpty || body.isNotEmpty) {
       _localNotifications.show(
         id: message.hashCode,
-        title: message.notification?.title ?? '',
-        body: message.notification?.body ?? '',
+        title: title,
+        body: body.length > 100 ? '${body.substring(0, 100)}...' : body,
         notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
             'messages_channel',
@@ -440,7 +460,7 @@ class NotificationService {
             presentSound: true,
           ),
         ),
-        payload: message.data['chatId'],
+        payload: chatId,
       );
     }
   }
@@ -516,6 +536,79 @@ class NotificationService {
   void clearCurrentOpenChat() {
     _currentOpenChatId = null;
     debugPrint('Current open chat cleared');
+  }
+
+  /// Show a local notification when a new message is received via WebSocket
+  /// and the user is not currently viewing that chat.
+  /// [chatConnectionId] - The chat connection ID (same as chatId used in setCurrentOpenChat)
+  /// [senderId] - The sender's user ID (for fetching name from Firestore)
+  /// [messageText] - The message content to show in the notification
+  Future<void> showNotificationForWebSocketMessage(
+    String chatConnectionId,
+    String senderId,
+    String messageText,
+  ) async {
+    // Don't show if this chat is currently open
+    if (_currentOpenChatId == chatConnectionId) {
+      debugPrint(
+        'Skipping WebSocket notification for currently open chat: $chatConnectionId',
+      );
+      return;
+    }
+
+    try {
+      String senderName = 'New message';
+      try {
+        final senderDoc = await _firestore
+            .collection('user')
+            .doc(senderId)
+            .get();
+        if (senderDoc.exists) {
+          final sender = UserModel.fromFirestore(senderDoc);
+          senderName = sender.fullName;
+        }
+      } catch (e) {
+        debugPrint('Could not fetch sender name for notification: $e');
+      }
+
+      final body = messageText.length > 100
+          ? '${messageText.substring(0, 100)}...'
+          : messageText;
+
+      const androidDetails = AndroidNotificationDetails(
+        'messages_channel',
+        'Messages',
+        channelDescription: 'Notifications for new messages',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      await _localNotifications.show(
+        id: chatConnectionId.hashCode,
+        title: senderName,
+        body: body,
+        notificationDetails: const NotificationDetails(
+          android: androidDetails,
+          iOS: iosDetails,
+        ),
+        payload: chatConnectionId,
+      );
+
+      debugPrint(
+        'Local notification shown for WebSocket message in chat $chatConnectionId',
+      );
+    } catch (e) {
+      debugPrint('Error showing WebSocket message notification: $e');
+    }
   }
 
   // Show local notification for new message
