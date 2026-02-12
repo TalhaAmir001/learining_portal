@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:learining_portal/network/data_models/auth/admin_data_model.dart';
@@ -449,26 +450,24 @@ class AuthProvider with ChangeNotifier {
 
   // Save user to Firestore after successful API login
   // Uses id for admin/teacher, user_id for student/guardian
+  // Firestore write is done in background so login completes immediately (avoids hanging on slow/offline Firestore).
   Future<void> _saveUserToFirestore(
     UserModel user, {
     required String documentId,
   }) async {
-    try {
-      await _firestore
+    // Set session state and persist ID so login completes immediately
+    _currentUserId = documentId;
+    await _saveUserIdToSharedPreferences(documentId);
+
+    // Write to Firestore in background – don't await so login doesn't hang
+    unawaited(
+      _firestore
           .collection('user')
           .doc(documentId)
-          .set(user.toFirestore(), SetOptions(merge: true));
-
-      _currentUserId = documentId;
-
-      // Save user ID to SharedPreferences for persistent authentication
-      await _saveUserIdToSharedPreferences(documentId);
-
-      debugPrint('User saved to Firestore with document ID: $documentId');
-    } catch (e) {
-      debugPrint('Error saving user to Firestore: $e');
-      // Don't throw error, just log it - user is still authenticated via API
-    }
+          .set(user.toFirestore(), SetOptions(merge: true))
+          .then((_) => debugPrint('User saved to Firestore with document ID: $documentId'))
+          .catchError((e) => debugPrint('Error saving user to Firestore: $e')),
+    );
   }
 
   // Create chat user entry in database after login

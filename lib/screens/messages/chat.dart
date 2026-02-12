@@ -1,9 +1,14 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:learining_portal/providers/messages/chat_provider.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/utils/widgets/messages/message_bubble.dart';
 import 'package:learining_portal/services/notification_service.dart';
+import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:provider/provider.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -36,7 +41,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isSending = false;
-  String? _lastNotifiedChatId; // Track the last chatId we notified about
+  bool _isUploadingImage = false;
+  bool _isUploadingDocument = false;
+  String? _lastNotifiedChatId;
+  bool _hasScrolledToBottomOnLoad = false;
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void dispose() {
@@ -67,10 +76,18 @@ class _ChatScreenState extends State<ChatScreen> {
       // This will convert Firestore chat ID to database connection ID if needed
       chatProvider.setChatId(widget.chatId!, authProvider: authProvider).then((
         _,
-      ) {
-        // Set the current open chat after conversion
+      ) async {
         if (chatProvider.chatId != null) {
           notificationService.setCurrentOpenChat(chatProvider.chatId);
+          // When admin opens a support thread (chat with student), claim it
+          if (authProvider.userType == UserType.admin &&
+              widget.otherUser?.userType == UserType.student &&
+              authProvider.currentUser?.uid != null) {
+            await MessagesChatRepository.claimSupportConnection(
+              connectionId: chatProvider.chatId!,
+              staffId: authProvider.currentUser!.uid,
+            );
+          }
         }
       });
     } else if (widget.otherUser != null) {
@@ -78,10 +95,18 @@ class _ChatScreenState extends State<ChatScreen> {
       // The uid is the Firestore document ID (which is actually the API user ID)
       chatProvider
           .initializeChat(widget.otherUser!.uid, authProvider: authProvider)
-          .then((_) {
-            // After chat is initialized, set the current open chat
+          .then((_) async {
             if (chatProvider.chatId != null) {
               notificationService.setCurrentOpenChat(chatProvider.chatId);
+              // When admin opens a support thread (chat with student), claim it so other admins don't see it
+              if (authProvider.userType == UserType.admin &&
+                  widget.otherUser?.userType == UserType.student &&
+                  authProvider.currentUser?.uid != null) {
+                await MessagesChatRepository.claimSupportConnection(
+                  connectionId: chatProvider.chatId!,
+                  staffId: authProvider.currentUser!.uid,
+                );
+              }
             }
           });
     }
@@ -134,6 +159,153 @@ class _ChatScreenState extends State<ChatScreen> {
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$displayHour:$minute $period';
+  }
+
+  Future<void> _pickAndSendImage() async {
+    final picked = await _imagePicker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (picked == null || !mounted) return;
+    final file = File(picked.path);
+    setState(() => _isUploadingImage = true);
+    try {
+      final result = await MessagesChatRepository.uploadChatImage(file);
+      if (!mounted) return;
+      if (result['success'] == true && result['image_url'] != null) {
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        await chatProvider.sendMessage(
+          '',
+          authProvider: authProvider,
+          messageType: 'image',
+          imageUrl: result['image_url'] as String,
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        });
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result['error']?.toString() ?? 'Failed to upload image')),
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingImage = false);
+    }
+  }
+
+  Future<void> _pickAndSendDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'rtf'],
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty || !mounted) return;
+    final platformFile = result.files.single;
+    final path = platformFile.path;
+    if (path == null || path.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not access file path')),
+        );
+      }
+      return;
+    }
+    final file = File(path);
+    if (!file.existsSync()) return;
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final filename = platformFile.name;
+    final tempId = chatProvider.addOptimisticDocumentMessage(filename);
+    if (tempId == null || !mounted) return;
+    setState(() => _isUploadingDocument = true);
+    try {
+      final uploadResult = await MessagesChatRepository.uploadChatDocument(
+        file,
+        onProgress: (sent, total) {
+          if (total > 0 && mounted) {
+            chatProvider.updateDocumentUploadProgress(tempId, sent / total);
+          }
+        },
+      );
+      if (!mounted) return;
+      if (uploadResult['success'] == true && uploadResult['document_url'] != null) {
+        final docUrl = uploadResult['document_url'] as String;
+        final name = uploadResult['filename'] as String? ?? filename;
+        await chatProvider.finalizeAndSendDocumentMessage(
+          tempId,
+          docUrl,
+          name,
+          authProvider: authProvider,
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        });
+      } else {
+        chatProvider.removeOptimisticDocumentMessage(tempId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(uploadResult['error']?.toString() ?? 'Failed to upload document')),
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingDocument = false);
+    }
+  }
+
+  void _showReportDialog(BuildContext context, UserModel reportedUser) {
+    final reasonController = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Report user'),
+        content: TextField(
+          controller: reasonController,
+          decoration: const InputDecoration(
+            hintText: 'Reason for report (optional)',
+            border: OutlineInputBorder(),
+          ),
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+              chatProvider.reportUser(
+                reportedUserId: reportedUser.uid,
+                reportedUserType: reportedUser.userType == UserType.teacher || reportedUser.userType == UserType.admin ? 'staff' : 'student',
+                reason: reasonController.text.trim().isEmpty ? 'No reason provided' : reasonController.text.trim(),
+              );
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Report submitted. Thank you.')),
+              );
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -197,6 +369,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               )
             : const Text('Chat', style: TextStyle(color: Colors.white)),
+        actions: otherUser != null
+            ? [
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, color: Colors.white),
+                  onSelected: (value) {
+                    if (value == 'report') _showReportDialog(context, otherUser);
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'report', child: Text('Report user')),
+                  ],
+                ),
+              ]
+            : null,
       ),
       body: Column(
         children: [
@@ -208,6 +393,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (chatProvider.chatId != null &&
                     chatProvider.chatId != _lastNotifiedChatId) {
                   _lastNotifiedChatId = chatProvider.chatId;
+                  _hasScrolledToBottomOnLoad = false; // New chat: scroll to bottom when messages load
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     final notificationService = NotificationService();
                     notificationService.setCurrentOpenChat(chatProvider.chatId);
@@ -282,15 +468,58 @@ class _ChatScreenState extends State<ChatScreen> {
                   chatProvider.markMessagesAsRead(authProvider: authProvider);
                 });
 
+                // Scroll to bottom once when messages first load (chronological: newest at bottom)
+                if (!_hasScrolledToBottomOnLoad && chatProvider.messages.isNotEmpty) {
+                  _hasScrolledToBottomOnLoad = true;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    Future.delayed(const Duration(milliseconds: 100), () {
+                      if (_scrollController.hasClients) {
+                        _scrollController.jumpTo(
+                          _scrollController.position.maxScrollExtent,
+                        );
+                      }
+                    });
+                  });
+                }
+
+                final hasMore = chatProvider.hasMore && !chatProvider.isLoadingMore;
+                final itemCount = chatProvider.messages.length + (hasMore ? 1 : 0);
+
                 return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  itemCount: chatProvider.messages.length,
+                  itemCount: itemCount,
                   itemBuilder: (context, index) {
-                    final message = chatProvider.messages[index];
-                    // Compare with API user ID (uid) not Firestore document ID
-                    final isCurrentUser =
-                        message.senderId == authProvider.currentUser?.uid;
+                    if (hasMore && index == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Center(
+                          child: TextButton.icon(
+                            onPressed: chatProvider.isLoadingMore
+                                ? null
+                                : () => chatProvider.loadMoreOlderMessages(),
+                            icon: chatProvider.isLoadingMore
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.expand_less),
+                            label: Text(
+                              chatProvider.isLoadingMore
+                                  ? 'Loading...'
+                                  : 'Load older messages',
+                              style: TextStyle(color: colorScheme.primary),
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    final msgIndex = hasMore ? index - 1 : index;
+                    final message = chatProvider.messages[msgIndex];
+                    final bool isCurrentUser =
+                        message.senderId == authProvider.currentUser?.uid ||
+                        message.actualSenderId == authProvider.currentUser?.uid;
 
                     return MessageBubble(
                       message: message,
@@ -320,6 +549,22 @@ class _ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: Row(
                   children: [
+                    IconButton(
+                      icon: Icon(Icons.image_outlined, color: colorScheme.primary),
+                      onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendImage,
+                      tooltip: 'Send image',
+                    ),
+                    IconButton(
+                      icon: _isUploadingDocument
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(Icons.attach_file, color: colorScheme.primary),
+                      onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendDocument,
+                      tooltip: 'Send document',
+                    ),
                     Expanded(
                       child: TextField(
                         controller: _messageController,

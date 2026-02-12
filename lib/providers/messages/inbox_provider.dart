@@ -103,10 +103,16 @@ class InboxProvider with ChangeNotifier {
         'InboxProvider: Loading connections for user: $inboxUserId (type: $inboxUserType)',
       );
 
+      // When loading Support inbox (admin), pass requesting_staff_id so only unclaimed or claimed-by-me threads are returned
+      final requestingStaffId = _authProvider!.userType == UserType.admin
+          ? apiUserId
+          : null;
+
       // Get connections from API
       final result = await MessagesChatRepository.getConnections(
         userId: inboxUserId,
         userType: inboxUserType,
+        requestingStaffId: requestingStaffId,
       );
 
       if (result['success'] != true) {

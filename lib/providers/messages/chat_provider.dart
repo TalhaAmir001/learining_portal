@@ -15,12 +15,16 @@ class ChatProvider with ChangeNotifier {
 
   List<MessageModel> _messages = [];
   bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
   String? _errorMessage;
   String? _chatConnectionId;
   bool _isConnected = false;
 
   List<MessageModel> get messages => _messages;
   bool get isLoading => _isLoading;
+  bool get isLoadingMore => _isLoadingMore;
+  bool get hasMore => _hasMore;
   String? get errorMessage => _errorMessage;
   String? get chatId => _chatConnectionId;
   bool get isConnected => _isConnected;
@@ -118,14 +122,20 @@ class ChatProvider with ChangeNotifier {
     _wsClient!.onMessageSent = (data) {
       debugPrint('ChatProvider: Message sent confirmation');
       final messageId = data['message_id']?.toString();
+      final senderDisplayName = data['sender_display_name'] as String?;
+      final actualSenderId = data['actual_sender_staff_id']?.toString();
       if (messageId != null) {
-        // Update temporary message ID with real one
+        // Update temporary message with real id and server-provided display name
         final tempIndex = _messages.indexWhere(
           (m) => m.messageId.startsWith('temp_'),
         );
         if (tempIndex != -1) {
           final tempMessage = _messages[tempIndex];
-          _messages[tempIndex] = tempMessage.copyWith(messageId: messageId);
+          _messages[tempIndex] = tempMessage.copyWith(
+            messageId: messageId,
+            senderDisplayName: senderDisplayName ?? tempMessage.senderDisplayName,
+            actualSenderId: actualSenderId ?? tempMessage.actualSenderId,
+          );
           notifyListeners();
         }
       }
@@ -134,8 +144,12 @@ class ChatProvider with ChangeNotifier {
     _wsClient!.onMessagesReceived = (data) {
       debugPrint('ChatProvider: Messages received via WebSocket');
       final messagesList = data['messages'] as List<dynamic>?;
+      final hasMore = data['has_more'] as bool? ?? false;
       if (messagesList != null) {
-        _handleMessagesReceived(messagesList.cast<Map<String, dynamic>>());
+        _handleMessagesReceived(
+          messagesList.cast<Map<String, dynamic>>(),
+          hasMore: hasMore,
+        );
       }
     };
 
@@ -180,48 +194,71 @@ class ChatProvider with ChangeNotifier {
       final message = MessageModel.fromWebSocket(messageData);
 
       // Only add if it's for the current chat
-      if (message.chatId == _chatConnectionId) {
-        // Check if message already exists (avoid duplicates)
-        final exists = _messages.any((m) => m.messageId == message.messageId);
-        if (!exists) {
-          _messages.add(message);
-          // Sort by timestamp (ascending - oldest first), then by message ID as secondary key
-          _messages.sort((a, b) {
-            final timeCompare = a.timestamp.compareTo(b.timestamp);
-            if (timeCompare != 0) return timeCompare;
-            // If timestamps are equal, sort by message ID (ascending)
-            return a.messageId.compareTo(b.messageId);
-          });
-          notifyListeners();
+      if (message.chatId != _chatConnectionId) return;
 
-          // Scroll to bottom would be handled by UI
-        }
+      final existingIndex = _messages.indexWhere((m) => m.messageId == message.messageId);
+      if (existingIndex != -1) {
+        final existing = _messages[existingIndex];
+        _messages[existingIndex] = existing.copyWith(
+          senderDisplayName: message.senderDisplayName ?? existing.senderDisplayName,
+          actualSenderId: message.actualSenderId ?? existing.actualSenderId,
+          messageType: message.messageType,
+          imageUrl: message.imageUrl ?? existing.imageUrl,
+        );
+        notifyListeners();
+        return;
       }
+
+      _messages.add(message);
+      _messages.sort((a, b) {
+        final timeCompare = a.timestamp.compareTo(b.timestamp);
+        if (timeCompare != 0) return timeCompare;
+        return a.messageId.compareTo(b.messageId);
+      });
+      notifyListeners();
     } catch (e) {
       debugPrint('ChatProvider: Error handling new message: $e');
     }
   }
 
-  // Handle messages received from server
-  void _handleMessagesReceived(List<Map<String, dynamic>> messagesData) {
+  // Handle messages received from server (initial load or load-more; server sends latest-first)
+  void _handleMessagesReceived(
+    List<Map<String, dynamic>> messagesData, {
+    bool hasMore = false,
+  }) {
     try {
-      _messages = messagesData
+      final newList = messagesData
           .map((data) => MessageModel.fromWebSocket(data))
           .toList();
 
-      // Sort by timestamp (ascending - oldest first), then by message ID as secondary key
+      if (_isLoadingMore) {
+        // Load more: prepend older messages (server returns older batch, no overlap)
+        final existingIds = _messages.map((m) => m.messageId).toSet();
+        for (var i = newList.length - 1; i >= 0; i--) {
+          if (!existingIds.contains(newList[i].messageId)) {
+            _messages.insert(0, newList[i]);
+          }
+        }
+        _isLoadingMore = false;
+      } else {
+        _messages = newList;
+      }
+
+      _hasMore = hasMore;
+      _isLoading = false;
+      _errorMessage = null;
+
+      // Sort chronologically: oldest first (top), newest last (bottom)
       _messages.sort((a, b) {
         final timeCompare = a.timestamp.compareTo(b.timestamp);
         if (timeCompare != 0) return timeCompare;
-        // If timestamps are equal, sort by message ID (ascending)
         return a.messageId.compareTo(b.messageId);
       });
-      _isLoading = false;
-      _errorMessage = null;
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Error loading messages: ${e.toString()}';
       _isLoading = false;
+      _isLoadingMore = false;
       notifyListeners();
       debugPrint('ChatProvider: Error handling messages: $e');
     }
@@ -479,17 +516,17 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Load messages for the current chat
+  // Load last 30 messages for the current chat (initial load)
   Future<void> _loadMessages() async {
     if (_chatConnectionId == null) return;
 
     _isLoading = true;
+    _hasMore = true;
     _errorMessage = null;
     notifyListeners();
 
-    // Request messages via WebSocket
     if (_wsClient != null && _wsClient!.isConnected) {
-      _wsClient!.getMessages(_chatConnectionId!);
+      _wsClient!.getMessages(_chatConnectionId!, limit: 30);
     } else {
       debugPrint(
         'ChatProvider: Cannot load messages - WebSocket not connected',
@@ -500,11 +537,30 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Send a message
-  Future<bool> sendMessage(String text, {AuthProvider? authProvider}) async {
-    if (_chatConnectionId == null || text.trim().isEmpty) {
-      return false;
-    }
+  /// Load older messages (for "load more" / WhatsApp-style scroll up)
+  void loadMoreOlderMessages() {
+    if (_chatConnectionId == null || _isLoadingMore || !_hasMore || _messages.isEmpty) return;
+
+    final oldestId = int.tryParse(_messages.first.messageId);
+    if (oldestId == null) return;
+
+    _isLoadingMore = true;
+    notifyListeners();
+
+    _wsClient?.getMessages(_chatConnectionId!, limit: 30, beforeId: oldestId);
+  }
+
+  // Send a text or image message
+  Future<bool> sendMessage(
+    String text, {
+    AuthProvider? authProvider,
+    String messageType = 'text',
+    String? imageUrl,
+  }) async {
+    if (_chatConnectionId == null) return false;
+    if (messageType == 'text' && text.trim().isEmpty) return false;
+    if (messageType == 'image' && (imageUrl == null || imageUrl.isEmpty)) return false;
+    if (messageType == 'document' && (imageUrl == null || imageUrl.isEmpty)) return false;
 
     final apiUserId = await _getApiUserId(authProvider);
     if (apiUserId == null) {
@@ -513,23 +569,26 @@ class ChatProvider with ChangeNotifier {
       return false;
     }
 
-    // Create optimistic message
+    final displayText = messageType == 'image'
+        ? (text.trim().isEmpty ? 'Photo' : text.trim())
+        : (messageType == 'document' ? (text.trim().isEmpty ? 'Document' : text.trim()) : text.trim());
+
     final optimisticMessage = MessageModel(
       messageId: 'temp_${DateTime.now().millisecondsSinceEpoch}',
       chatId: _chatConnectionId!,
       senderId: apiUserId,
-      text: text.trim(),
+      text: displayText,
       timestamp: DateTime.now(),
       isRead: false,
+      messageType: messageType,
+      imageUrl: imageUrl,
+      uploadProgress: null,
     );
 
-    // Add optimistically
     _messages.add(optimisticMessage);
-    // Sort by timestamp (ascending - oldest first), then by message ID as secondary key
     _messages.sort((a, b) {
       final timeCompare = a.timestamp.compareTo(b.timestamp);
       if (timeCompare != 0) return timeCompare;
-      // If timestamps are equal, sort by message ID (ascending)
       return a.messageId.compareTo(b.messageId);
     });
     notifyListeners();
@@ -537,13 +596,14 @@ class ChatProvider with ChangeNotifier {
     try {
       final userType = _getUserTypeForWebSocket(authProvider);
 
-      // Send message via WebSocket
       if (_wsClient != null && _wsClient!.isConnected) {
         _wsClient!.sendMessage(
           chatConnectionId: _chatConnectionId!,
-          message: text.trim(),
+          message: displayText,
           senderId: apiUserId,
           userType: userType,
+          messageType: messageType,
+          imageUrl: imageUrl,
         );
       } else {
         // Remove optimistic message on error
@@ -615,28 +675,110 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Mark messages as read
+  // Mark messages as read (notify server and update local state)
   Future<void> markMessagesAsRead({AuthProvider? authProvider}) async {
     if (_chatConnectionId == null) return;
 
-    // This would require an API endpoint to mark messages as read
-    // For now, we'll just update local state
     try {
       final apiUserId = await _getApiUserId(authProvider);
       if (apiUserId == null) return;
 
-      // Update local messages
-      for (var message in _messages) {
-        if (message.senderId != apiUserId && !message.isRead) {
-          // Mark as read locally
-          // In a real implementation, you'd call an API endpoint
-          final index = _messages.indexOf(message);
-          _messages[index] = message.copyWith(isRead: true);
+      _wsClient?.markMessagesRead(_chatConnectionId!);
+
+      for (var i = 0; i < _messages.length; i++) {
+        final message = _messages[i];
+        if (message.senderId != apiUserId && message.actualSenderId != apiUserId && !message.isRead) {
+          _messages[i] = message.copyWith(isRead: true);
         }
       }
       notifyListeners();
     } catch (e) {
       debugPrint('ChatProvider: Error marking messages as read: $e');
     }
+  }
+
+  /// Report the other user in this chat (saved to complain_reports table)
+  void reportUser({
+    required String reportedUserId,
+    required String reportedUserType,
+    required String reason,
+  }) {
+    if (_chatConnectionId == null) return;
+    _wsClient?.reportUser(
+      reportedUserId: reportedUserId,
+      reportedUserType: reportedUserType,
+      reason: reason,
+      chatConnectionId: _chatConnectionId,
+    );
+  }
+
+  /// Add an optimistic document message (upload in progress). Returns temp message id.
+  String? addOptimisticDocumentMessage(String filename) {
+    if (_chatConnectionId == null) return null;
+    final apiUserId = _currentUserApiId;
+    if (apiUserId == null) return null;
+    final tempId = 'temp_doc_${DateTime.now().millisecondsSinceEpoch}';
+    final msg = MessageModel(
+      messageId: tempId,
+      chatId: _chatConnectionId!,
+      senderId: apiUserId,
+      text: filename,
+      timestamp: DateTime.now(),
+      isRead: false,
+      messageType: 'document',
+      imageUrl: null,
+      uploadProgress: 0.0,
+    );
+    _messages.add(msg);
+    _messages.sort((a, b) {
+      final timeCompare = a.timestamp.compareTo(b.timestamp);
+      if (timeCompare != 0) return timeCompare;
+      return a.messageId.compareTo(b.messageId);
+    });
+    notifyListeners();
+    return tempId;
+  }
+
+  /// Update upload progress for an optimistic document message.
+  void updateDocumentUploadProgress(String tempId, double progress) {
+    final index = _messages.indexWhere((m) => m.messageId == tempId);
+    if (index == -1) return;
+    _messages[index] = _messages[index].copyWith(uploadProgress: progress.clamp(0.0, 1.0));
+    notifyListeners();
+  }
+
+  /// Finalize document message (set URL, clear progress) and send via WebSocket.
+  Future<bool> finalizeAndSendDocumentMessage(
+    String tempId,
+    String documentUrl,
+    String filename, {
+    AuthProvider? authProvider,
+  }) async {
+    if (_chatConnectionId == null) return false;
+    final index = _messages.indexWhere((m) => m.messageId == tempId);
+    if (index == -1) return false;
+    final apiUserId = await _getApiUserId(authProvider);
+    if (apiUserId == null) return false;
+    _messages[index] = _messages[index].copyWith(
+      imageUrl: documentUrl,
+      clearUploadProgress: true,
+    );
+    notifyListeners();
+    final userType = _getUserTypeForWebSocket(authProvider);
+    _wsClient?.sendMessage(
+      chatConnectionId: _chatConnectionId!,
+      message: filename,
+      senderId: apiUserId,
+      userType: userType,
+      messageType: 'document',
+      imageUrl: documentUrl,
+    );
+    return true;
+  }
+
+  /// Remove optimistic document message (e.g. on upload failure).
+  void removeOptimisticDocumentMessage(String tempId) {
+    _messages.removeWhere((m) => m.messageId == tempId);
+    notifyListeners();
   }
 }

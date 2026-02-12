@@ -374,34 +374,74 @@ class WebSocketClient {
     }
   }
 
-  /// Send a chat message
-  ///
-  /// [chatConnectionId] - The chat connection ID
-  /// [message] - The message text
-  /// [senderId] - The sender's user ID (staff_id or student_id)
-  /// [userType] - Optional user type (uses connected user type if not provided)
+  /// Send a chat message (text or image)
   void sendMessage({
     required String chatConnectionId,
     required String message,
     required String senderId,
     String? userType,
+    String messageType = 'text',
+    String? imageUrl,
   }) {
-    _sendMessage({
+    final payload = <String, dynamic>{
       'action': 'send_message',
       'chat_connection_id': chatConnectionId,
       'message': message,
       'sender_id': senderId,
       'user_type': userType ?? _userType,
+    };
+    if (messageType == 'image' || messageType == 'document') {
+      payload['message_type'] = messageType;
+      if (imageUrl != null && imageUrl.isNotEmpty) {
+        payload['image_url'] = imageUrl;
+        if (messageType == 'document') {
+          payload['document_url'] = imageUrl;
+        }
+      }
+    }
+    _sendMessage(payload);
+  }
+
+  /// Request messages for a chat connection (paginated)
+  /// [limit] - Max messages to return (default 30)
+  /// [beforeId] - Load messages older than this id (for "load more")
+  void getMessages(
+    String chatConnectionId, {
+    int limit = 30,
+    int? beforeId,
+  }) {
+    final payload = <String, dynamic>{
+      'action': 'get_messages',
+      'chat_connection_id': chatConnectionId,
+      'limit': limit,
+    };
+    if (beforeId != null && beforeId > 0) {
+      payload['before_id'] = beforeId;
+    }
+    _sendMessage(payload);
+  }
+
+  /// Mark messages in this chat as read
+  void markMessagesRead(String chatConnectionId) {
+    _sendMessage({
+      'action': 'mark_messages_read',
+      'chat_connection_id': chatConnectionId,
     });
   }
 
-  /// Request messages for a chat connection
-  ///
-  /// [chatConnectionId] - The chat connection ID
-  void getMessages(String chatConnectionId) {
+  /// Report a user (saved to complain_reports table)
+  void reportUser({
+    required String reportedUserId,
+    required String reportedUserType,
+    required String reason,
+    String? chatConnectionId,
+  }) {
     _sendMessage({
-      'action': 'get_messages',
-      'chat_connection_id': chatConnectionId,
+      'action': 'report_user',
+      'reported_user_id': reportedUserId,
+      'reported_user_type': reportedUserType,
+      'reason': reason,
+      if (chatConnectionId != null && chatConnectionId.isNotEmpty) 'chat_connection_id': chatConnectionId,
     });
   }
 

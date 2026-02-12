@@ -4,17 +4,30 @@ class MessageModel {
   final String messageId;
   final String chatId;
   final String senderId;
+  final String? actualSenderId; // Staff who sent when replying as Support (support thread)
+  final String? senderDisplayName; // Display name for actual sender (e.g. admin name above message)
   final String text;
   final DateTime timestamp;
   final bool isRead;
+  /// 'text', 'image', or 'document'
+  final String messageType;
+  /// URL when messageType is 'image' or 'document'
+  final String? imageUrl;
+  /// Upload progress 0.0–1.0 for outgoing document/image; null when not uploading
+  final double? uploadProgress;
 
   MessageModel({
     required this.messageId,
     required this.chatId,
     required this.senderId,
+    this.actualSenderId,
+    this.senderDisplayName,
     required this.text,
     required this.timestamp,
     this.isRead = false,
+    this.messageType = 'text',
+    this.imageUrl,
+    this.uploadProgress,
   });
 
   // Create MessageModel from Firestore document
@@ -92,18 +105,41 @@ class MessageModel {
       timestamp = DateTime.now();
     }
 
+    final actualSenderId = data['actual_sender_staff_id']?.toString();
+    final senderDisplayName = data['sender_display_name'] as String?;
+    final rawType = data['message_type'] as String?;
+    final imageUrl = (data['image_url'] ?? data['document_url']) as String?;
+    // Infer document when we have image_url but type is missing/text (e.g. loaded from server after reopen)
+    final messageType = rawType == 'image'
+        ? 'image'
+        : (rawType == 'document'
+            ? 'document'
+            : (imageUrl != null && imageUrl.isNotEmpty
+                ? 'document'
+                : 'text'));
+
     return MessageModel(
       messageId: messageId,
       chatId: chatConnectionId,
       senderId: senderId,
+      actualSenderId: actualSenderId?.isNotEmpty == true ? actualSenderId : null,
+      senderDisplayName: senderDisplayName?.isNotEmpty == true ? senderDisplayName : null,
       text: message,
       timestamp: timestamp,
       isRead: isRead,
+      messageType: messageType,
+      imageUrl: imageUrl?.isNotEmpty == true ? imageUrl : null,
+      uploadProgress: null,
     );
   }
 
   // Create MessageModel from Map (for Firestore compatibility)
   factory MessageModel.fromMap(Map<String, dynamic> map, String messageId) {
+    final actualSenderId = map['actualSenderId'] as String? ?? map['actual_sender_staff_id']?.toString();
+    final senderDisplayName = map['senderDisplayName'] as String? ?? map['sender_display_name'] as String?;
+    final rawType = map['messageType'] as String? ?? map['message_type'] as String?;
+    final messageType = rawType == 'image' ? 'image' : (rawType == 'document' ? 'document' : 'text');
+    final imageUrl = map['imageUrl'] as String? ?? map['image_url'] as String?;
     return MessageModel(
       messageId: messageId,
       chatId:
@@ -112,6 +148,8 @@ class MessageModel {
           '',
       senderId:
           map['senderId'] as String? ?? map['sender_id']?.toString() ?? '',
+      actualSenderId: actualSenderId?.isNotEmpty == true ? actualSenderId : null,
+      senderDisplayName: senderDisplayName?.isNotEmpty == true ? senderDisplayName : null,
       text: map['text'] as String? ?? map['message'] as String? ?? '',
       timestamp:
           (map['timestamp'] as Timestamp?)?.toDate() ??
@@ -120,6 +158,9 @@ class MessageModel {
               : null) ??
           DateTime.now(),
       isRead: MessageModel._parseBool(map['isRead'] ?? map['is_read']),
+      messageType: messageType,
+      imageUrl: imageUrl?.isNotEmpty == true ? imageUrl : null,
+      uploadProgress: null,
     );
   }
 
@@ -134,22 +175,33 @@ class MessageModel {
     };
   }
 
-  // Copy with method
+  // Copy with method. Pass [clearUploadProgress: true] to set uploadProgress to null.
   MessageModel copyWith({
     String? messageId,
     String? chatId,
     String? senderId,
+    String? actualSenderId,
+    String? senderDisplayName,
     String? text,
     DateTime? timestamp,
     bool? isRead,
+    String? messageType,
+    String? imageUrl,
+    double? uploadProgress,
+    bool clearUploadProgress = false,
   }) {
     return MessageModel(
       messageId: messageId ?? this.messageId,
       chatId: chatId ?? this.chatId,
       senderId: senderId ?? this.senderId,
+      actualSenderId: actualSenderId ?? this.actualSenderId,
+      senderDisplayName: senderDisplayName ?? this.senderDisplayName,
       text: text ?? this.text,
       timestamp: timestamp ?? this.timestamp,
       isRead: isRead ?? this.isRead,
+      messageType: messageType ?? this.messageType,
+      imageUrl: imageUrl ?? this.imageUrl,
+      uploadProgress: clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
     );
   }
 
