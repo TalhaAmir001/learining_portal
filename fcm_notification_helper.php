@@ -393,6 +393,54 @@ class FCMNotificationHelper {
     }
     
     /**
+     * Get FCM tokens for notice board push based on visibility (visible_student, visible_staff, visible_parent).
+     * Returns tokens from fl_chat_users: students (user_type=student), staff (user_type=staff, staff_id != 0).
+     * Parent/guardian: if your app stores them in fl_chat_users with user_type e.g. 'parent', add a column
+     * or use the same as student; here we treat parent as student for token lookup if no parent_id column.
+     *
+     * @param bool $visibleStudent
+     * @param bool $visibleStaff
+     * @param bool $visibleParent
+     * @return string[] FCM tokens
+     */
+    public function getFCMTokensForNoticeTarget($visibleStudent, $visibleStaff, $visibleParent) {
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
+            return [];
+        }
+        $conditions = [];
+        if ($visibleStudent) {
+            $conditions[] = "(user_type = 'student' AND student_id IS NOT NULL AND student_id != 0 AND fcm_token IS NOT NULL AND fcm_token != '')";
+        }
+        if ($visibleStaff) {
+            $conditions[] = "(user_type = 'staff' AND staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != '')";
+        }
+        if ($visibleParent) {
+            // If you have parent_id in fl_chat_users, add: (user_type = 'parent' AND parent_id IS NOT NULL ...)
+            // Otherwise parents may use the same app as students; include student tokens as proxy if no separate parent store
+            if (!$visibleStudent) {
+                $conditions[] = "(user_type = 'student' AND student_id IS NOT NULL AND fcm_token IS NOT NULL AND fcm_token != '')";
+            }
+        }
+        if (empty($conditions)) {
+            $mysqli->close();
+            return [];
+        }
+        $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE (" . implode(' OR ', $conditions) . ")";
+        $result = $mysqli->query($sql);
+        $tokens = [];
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                if (!empty($row['fcm_token'])) {
+                    $tokens[] = $row['fcm_token'];
+                }
+            }
+        }
+        $mysqli->close();
+        return $tokens;
+    }
+
+    /**
      * Get FCM tokens for all staff (excluding Support staff_id=0) for Support inbox notifications
      */
     public function getFCMTokensForAllStaff() {

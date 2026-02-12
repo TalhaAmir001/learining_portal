@@ -30,6 +30,8 @@ class AuthProvider with ChangeNotifier {
 
   // Callback for when new messages are received
   Function(Map<String, dynamic>)? onNewMessageReceived;
+  /// Callback for when a new notice is broadcast (notice board); app can refresh notice list.
+  Function(Map<String, dynamic>)? onNewNoticeReceived;
 
   // Constructor for normal initialization
   AuthProvider() {
@@ -316,6 +318,12 @@ class AuthProvider with ChangeNotifier {
       debugPrint('AuthProvider: New message received via WebSocket');
       // Notify listeners (like InboxProvider) about new message
       onNewMessageReceived?.call(data);
+      notifyListeners();
+    };
+
+    _wsClient!.onNewNotice = (data) {
+      debugPrint('AuthProvider: New notice received via WebSocket');
+      onNewNoticeReceived?.call(data);
       notifyListeners();
     };
 

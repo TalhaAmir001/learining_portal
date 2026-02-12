@@ -41,6 +41,8 @@ class ChatWebSocketServer implements MessageComponentInterface
     /** @var \SplObjectStorage Connection -> chat_connection_id (which support thread this staff is viewing) */
     protected $staffViewingChat;
     protected $fcmHelper; // FCM notification helper
+    /** Path to file written by CodeIgniter when a new notice is added (trigger broadcast) */
+    protected $pendingNoticeBroadcastPath;
 
     public function __construct()
     {
@@ -49,6 +51,7 @@ class ChatWebSocketServer implements MessageComponentInterface
         $this->staffConnections = new \SplObjectStorage;
         $this->staffViewingChat = new \SplObjectStorage();
         $this->fcmHelper = new FCMNotificationHelper();
+        $this->pendingNoticeBroadcastPath = __DIR__ . '/application/cache/pending_notice_broadcast.json';
     }
 
     public function onOpen(ConnectionInterface $conn)
@@ -1278,22 +1281,66 @@ class ChatWebSocketServer implements MessageComponentInterface
         $mysqli->close();
         return null;
     }
+
+    /**
+     * Check for pending notice broadcast file (written by CodeIgniter when a new notice is added)
+     * and broadcast new_notice to all connected clients so the app can refresh the notice board.
+     */
+    public function checkAndBroadcastNewNotice()
+    {
+        $path = $this->pendingNoticeBroadcastPath;
+        if (!file_exists($path)) {
+            return;
+        }
+        $json = @file_get_contents($path);
+        if ($json === false || $json === '') {
+            return;
+        }
+        $data = json_decode($json, true);
+        if (!is_array($data)) {
+            @unlink($path);
+            return;
+        }
+        $payload = [
+            'action' => 'new_notice',
+            'notice' => $data,
+        ];
+        $message = json_encode($payload);
+        $count = 0;
+        foreach ($this->clients as $client) {
+            try {
+                $client->send($message);
+                $count++;
+            } catch (\Exception $e) {
+                echo "Broadcast new_notice to client failed: " . $e->getMessage() . "\n";
+            }
+        }
+        echo "Broadcast new_notice to {$count} client(s)\n";
+        @unlink($path);
+    }
 }
 
-// Start the server
+// Start the server with event loop so we can poll for pending notice broadcasts
 $port = 8080; // WebSocket port
-$server = IoServer::factory(
-    new HttpServer(
-        new WsServer(
-            new ChatWebSocketServer()
-        )
-    ),
-    $port
+$address = '0.0.0.0';
+
+$loop = \React\EventLoop\Factory::create();
+$app = new ChatWebSocketServer();
+$socket = new \React\Socket\Server($address . ':' . $port, $loop);
+$server = new IoServer(
+    new HttpServer(new WsServer($app)),
+    $socket,
+    $loop
 );
+
+// Poll every 3 seconds for new notice broadcast (triggered when admin adds a notice)
+$loop->addPeriodicTimer(3, function () use ($app) {
+    $app->checkAndBroadcastNewNotice();
+});
 
 echo "WebSocket server started on port {$port}\n";
 echo "Connect to: ws://localhost:{$port}\n";
-$server->run();
+$loop->run();
 
 
 //retrieve lists from REST and use websocket to only listen data changes

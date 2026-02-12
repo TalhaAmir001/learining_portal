@@ -63,10 +63,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   // Show notification only for chat messages (have chatId or notification payload)
   final chatId = message.data['chatId'] ?? message.data['chat_id'];
-  final title = message.notification?.title ??
-      message.data['title'] ??
-      'New message';
-  final body = message.notification?.body ??
+  final title =
+      message.notification?.title ?? message.data['title'] ?? 'New message';
+  final body =
+      message.notification?.body ??
       message.data['message'] ??
       message.data['body'] ??
       'You have a new message';
@@ -430,10 +430,10 @@ class NotificationService {
     debugPrint('Received foreground message: ${message.messageId}');
 
     // Show local notification (from notification payload or data)
-    final title = message.notification?.title ??
-        message.data['title'] ??
-        'New message';
-    final body = message.notification?.body ??
+    final title =
+        message.notification?.title ?? message.data['title'] ?? 'New message';
+    final body =
+        message.notification?.body ??
         message.data['message'] ??
         message.data['body'] ??
         '';

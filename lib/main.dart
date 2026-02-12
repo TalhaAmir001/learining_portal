@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:learining_portal/network/firebase_options.dart';
+import 'package:learining_portal/providers/notice_board/notice_board_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,7 +11,7 @@ import 'providers/auth_provider.dart';
 import 'providers/messages/inbox_provider.dart';
 import 'providers/messages/members_provider.dart';
 import 'providers/messages/notification_provider.dart';
-import 'providers/notifications/notice_board_provider.dart';
+import 'providers/send_notifications_provider.dart';
 import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard.dart';
@@ -199,6 +200,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => MembersProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
         ChangeNotifierProvider(create: (_) => NoticeBoardProvider()),
+        ChangeNotifierProvider(create: (_) => SendNotificationsProvider()),
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
@@ -301,11 +303,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           debugPrint('Main: Error ensuring WebSocket connection: $error');
         });
         // Refresh FCM token in database so server can send push when app is closed
-        notificationProvider
-            .refreshFCMTokenInDatabase(authProvider)
-            .catchError((error) {
-          debugPrint('Main: Error refreshing FCM token: $error');
-        });
+        notificationProvider.refreshFCMTokenInDatabase(authProvider).catchError(
+          (error) {
+            debugPrint('Main: Error refreshing FCM token: $error');
+          },
+        );
       }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
-import 'package:learining_portal/screens/notifications/notice_board.dart';
 import 'package:provider/provider.dart';
 
 class DashboardAppBar extends StatelessWidget {
@@ -67,12 +66,12 @@ class DashboardAppBar extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NoticeBoardScreen(),
-                ),
-              );
+              // Navigator.push(
+              //   context,
+              //   MaterialPageRoute(
+              //     builder: (context) => const NoticeBoardScreen(),
+              //   ),
+              // );
             },
             tooltip: 'Notifications',
           ),

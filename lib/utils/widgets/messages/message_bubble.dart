@@ -11,7 +11,7 @@ final RegExp _urlRegex = RegExp(
   caseSensitive: false,
 );
 
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends StatefulWidget {
   final MessageModel message;
   final bool isCurrentUser;
   final String Function(DateTime) formatTime;
@@ -23,26 +23,76 @@ class MessageBubble extends StatelessWidget {
     required this.formatTime,
   });
 
-  Future<void> _downloadDocument(BuildContext context, String url, String filename) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Downloading...'), duration: Duration(seconds: 1)),
-    );
-    final path = await MessagesChatRepository.downloadChatDocument(url, filename);
-    if (!context.mounted) return;
+  @override
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<MessageBubble> {
+  String? _downloadingUrl;
+  double _downloadProgress = 0.0;
+
+  bool get _isDownloading =>
+      _downloadingUrl != null && widget.message.imageUrl == _downloadingUrl;
+
+  Future<void> _downloadContent(
+    BuildContext context,
+    String url,
+    String filename,
+    bool isImage,
+  ) async {
+    if (_downloadingUrl != null) return;
+    setState(() {
+      _downloadingUrl = url;
+      _downloadProgress = 0.0;
+    });
+    final String? path;
+    if (isImage) {
+      path = await MessagesChatRepository.downloadChatImage(
+        url,
+        filename,
+        onProgress: (received, total) {
+          if (mounted && _downloadingUrl == url) {
+            setState(() {
+              _downloadProgress =
+                  total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+            });
+          }
+        },
+      );
+    } else {
+      path = await MessagesChatRepository.downloadChatDocument(
+        url,
+        filename,
+        onProgress: (received, total) {
+          if (mounted && _downloadingUrl == url) {
+            setState(() {
+              _downloadProgress =
+                  total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+            });
+          }
+        },
+      );
+    }
+    if (!mounted) return;
+    setState(() {
+      _downloadingUrl = null;
+      _downloadProgress = 0.0;
+    });
     if (path != null) {
       final result = await OpenFile.open(path);
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result.type == ResultType.done ? 'Downloaded' : result.message),
+            content: Text(
+              result.type == ResultType.done ? 'Downloaded' : result.message,
+            ),
             duration: const Duration(seconds: 2),
           ),
         );
       }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Download failed')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Download failed')));
     }
   }
 
@@ -74,7 +124,7 @@ class MessageBubble extends StatelessWidget {
     } catch (_) {}
     // Fallback: download and open with open_file (works when no browser handles the URL)
     if (!context.mounted) return;
-    await _downloadDocument(context, url, filename);
+    await _downloadContent(context, url, filename, false);
   }
 
   Widget _buildLinkifiedText(String text, bool isCurrentUser) {
@@ -124,9 +174,45 @@ class MessageBubble extends StatelessWidget {
     return RichText(text: TextSpan(children: spans));
   }
 
+  Widget _buildDownloadProgressBar(bool isCurrentUser) {
+    if (!_isDownloading) return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Downloading...',
+            style: TextStyle(
+              color: isCurrentUser ? Colors.white70 : Colors.grey[600],
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _downloadProgress,
+              minHeight: 4,
+              backgroundColor: (isCurrentUser ? Colors.white : Colors.grey)
+                  .withOpacity(0.3),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                isCurrentUser ? Colors.white70 : colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final message = widget.message;
+    final isCurrentUser = widget.isCurrentUser;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -187,7 +273,7 @@ class MessageBubble extends StatelessWidget {
                   ],
                   if (message.messageType == 'image' &&
                       message.imageUrl != null &&
-                      message.imageUrl!.isNotEmpty)
+                      message.imageUrl!.isNotEmpty) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: Image.network(
@@ -221,6 +307,34 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
+                    GestureDetector(
+                      onTap: _downloadingUrl != null
+                          ? null
+                          : () => _downloadContent(
+                                context,
+                                message.imageUrl!,
+                                message.text.isNotEmpty
+                                    ? message.text
+                                    : 'image_${message.messageId}.jpg',
+                                true,
+                              ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Download',
+                          style: TextStyle(
+                            color: isCurrentUser
+                                ? Colors.white70
+                                : Colors.blue.shade700,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                    ),
+                    _buildDownloadProgressBar(isCurrentUser),
+                  ],
                   if (message.messageType == 'document' &&
                       (message.imageUrl != null &&
                               message.imageUrl!.isNotEmpty ||
@@ -229,16 +343,17 @@ class MessageBubble extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 6),
                       child: InkWell(
-                        onTap: message.uploadProgress == null &&
+                        onTap:
+                            message.uploadProgress == null &&
                                 message.imageUrl != null &&
                                 message.imageUrl!.isNotEmpty
                             ? () => _openDocumentUrl(
-                                  context,
-                                  message.imageUrl!,
-                                  message.text.isNotEmpty
-                                      ? message.text
-                                      : 'document',
-                                )
+                                context,
+                                message.imageUrl!,
+                                message.text.isNotEmpty
+                                    ? message.text
+                                    : 'document',
+                              )
                             : null,
                         borderRadius: BorderRadius.circular(8),
                         child: Container(
@@ -313,26 +428,28 @@ class MessageBubble extends StatelessWidget {
                                           ),
                                           if (!isCurrentUser)
                                             GestureDetector(
-                                              onTap: () =>
-                                                  _downloadDocument(
-                                                context,
-                                                message.imageUrl!,
-                                                message.text.isNotEmpty
-                                                    ? message.text
-                                                    : 'document',
-                                              ),
+                                              onTap: _downloadingUrl != null
+                                                  ? null
+                                                  : () => _downloadContent(
+                                                        context,
+                                                        message.imageUrl!,
+                                                        message.text.isNotEmpty
+                                                            ? message.text
+                                                            : 'document',
+                                                        false,
+                                                      ),
                                               child: Padding(
                                                 padding: const EdgeInsets.only(
-                                                    top: 2),
+                                                  top: 2,
+                                                ),
                                                 child: Text(
                                                   'Download',
                                                   style: TextStyle(
                                                     color: Colors.blue.shade700,
                                                     fontSize: 12,
-                                                    fontWeight:
-                                                        FontWeight.w600,
-                                                    decoration:
-                                                        TextDecoration.underline,
+                                                    fontWeight: FontWeight.w600,
+                                                    decoration: TextDecoration
+                                                        .underline,
                                                   ),
                                                 ),
                                               ),
@@ -343,6 +460,7 @@ class MessageBubble extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                              _buildDownloadProgressBar(isCurrentUser),
                               if (message.uploadProgress != null) ...[
                                 const SizedBox(height: 8),
                                 ClipRRect(
@@ -350,10 +468,11 @@ class MessageBubble extends StatelessWidget {
                                   child: LinearProgressIndicator(
                                     value: message.uploadProgress,
                                     minHeight: 4,
-                                    backgroundColor: (isCurrentUser
-                                            ? Colors.white
-                                            : Colors.grey)
-                                        .withOpacity(0.3),
+                                    backgroundColor:
+                                        (isCurrentUser
+                                                ? Colors.white
+                                                : Colors.grey)
+                                            .withOpacity(0.3),
                                     valueColor: AlwaysStoppedAnimation<Color>(
                                       isCurrentUser
                                           ? Colors.white70
@@ -389,7 +508,7 @@ class MessageBubble extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       Text(
-                        formatTime(message.timestamp),
+                        widget.formatTime(message.timestamp),
                         style: TextStyle(
                           color: isCurrentUser
                               ? Colors.white70

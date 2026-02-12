@@ -1,18 +1,67 @@
 import 'package:flutter/material.dart';
+import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/providers/messages/members_provider.dart';
+import 'package:learining_portal/providers/send_notifications_provider.dart';
 import 'package:learining_portal/utils/widgets/dashboard_app_bar.dart';
 import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
+import 'package:learining_portal/utils/widgets/notice_board_box.dart';
+import 'package:provider/provider.dart';
+import 'messages/chat.dart';
 import 'messages/inbox.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final size = MediaQuery.of(context).size;
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
 
-    // Dashboard items with icons and text
-    final List<DashboardItem> dashboardItems = [
+class _DashboardScreenState extends State<DashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = context.read<AuthProvider>();
+      final sendNotifications = context.read<SendNotificationsProvider>();
+      sendNotifications.setAuthProvider(auth);
+      // When WebSocket broadcasts a new notice, refresh the notice board list
+      auth.onNewNoticeReceived = (_) {
+        sendNotifications.loadNotices();
+      };
+    });
+  }
+
+  /// For teacher, student, guardian: show Support and open chat with Support directly.
+  /// For admin: show Messages and open Inbox.
+  static List<DashboardItem> _buildDashboardItems(
+    BuildContext context,
+    UserType? userType,
+  ) {
+    final isSupportUserType =
+        userType == UserType.teacher ||
+        userType == UserType.student ||
+        userType == UserType.guardian;
+
+    if (isSupportUserType) {
+      return [
+        DashboardItem(
+          icon: Icons.support_agent,
+          title: 'Support',
+          color: Colors.blue,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    ChatScreenWrapper(otherUser: MembersProvider.supportUser),
+              ),
+            );
+          },
+        ),
+      ];
+    }
+
+    return [
       DashboardItem(
         icon: Icons.message_outlined,
         title: 'Messages',
@@ -24,90 +73,13 @@ class DashboardScreen extends StatelessWidget {
           );
         },
       ),
-      // DashboardItem(
-      //   icon: Icons.school_outlined,
-      //   title: 'Teachers',
-      //   color: Colors.orange,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Teachers management coming soon!')),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.family_restroom_outlined,
-      //   title: 'Guardians',
-      //   color: Colors.green,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Guardians management coming soon!')),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.book_outlined,
-      //   title: 'Courses',
-      //   color: Colors.purple,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Courses management coming soon!')),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.assessment_outlined,
-      //   title: 'Reports',
-      //   color: Colors.red,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(
-      //       context,
-      //     ).showSnackBar(const SnackBar(content: Text('Reports coming soon!')));
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.settings_ethernet_outlined,
-      //   title: 'WebSocket Status',
-      //   color: Colors.teal,
-      //   onTap: () {
-      //     Navigator.push(
-      //       context,
-      //       MaterialPageRoute(
-      //         builder: (context) => const WebSocketStatusScreen(),
-      //       ),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.settings_outlined,
-      //   title: 'Settings',
-      //   color: Colors.grey,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Settings coming soon!')),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.notifications_outlined,
-      //   title: 'Notifications',
-      //   color: Colors.amber,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Notifications coming soon!')),
-      //     );
-      //   },
-      // ),
-      // DashboardItem(
-      //   icon: Icons.analytics_outlined,
-      //   title: 'Analytics',
-      //   color: Colors.teal,
-      //   onTap: () {
-      //     ScaffoldMessenger.of(context).showSnackBar(
-      //       const SnackBar(content: Text('Analytics coming soon!')),
-      //     );
-      //   },
-      // ),
     ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final size = MediaQuery.of(context).size;
 
     return Scaffold(
       body: Container(
@@ -125,30 +97,48 @@ class DashboardScreen extends StatelessWidget {
         child: SafeArea(
           child: Column(
             children: [
-              // App Bar
               const DashboardAppBar(),
-
-              // Dashboard Grid
               Expanded(
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: size.width > 600 ? size.width * 0.1 : 20.0,
-                    vertical: 24.0,
-                  ),
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: size.width > 600 ? 4 : 2,
-                      crossAxisSpacing: 16,
-                      mainAxisSpacing: 16,
-                      childAspectRatio: 1.1,
-                    ),
-                    itemCount: dashboardItems.length,
-                    itemBuilder: (context, index) {
-                      return DashboardGridItem(item: dashboardItems[index]);
-                    },
-                  ),
+                child: Consumer2<AuthProvider, SendNotificationsProvider>(
+                  builder: (context, authProvider, sendNotifications, _) {
+                    final dashboardItems = _buildDashboardItems(
+                      context,
+                      authProvider.userType,
+                    );
+                    return SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: size.width > 600 ? size.width * 0.1 : 20.0,
+                        vertical: 24.0,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          NoticeBoardBox(
+                            notices: sendNotifications.notices,
+                            isLoading: sendNotifications.isLoading,
+                          ),
+                          const SizedBox(height: 20),
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: size.width > 600 ? 4 : 2,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
+                                  childAspectRatio: 1.1,
+                                ),
+                            itemCount: dashboardItems.length,
+                            itemBuilder: (context, index) {
+                              return DashboardGridItem(
+                                item: dashboardItems[index],
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ],

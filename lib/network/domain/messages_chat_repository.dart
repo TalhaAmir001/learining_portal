@@ -299,10 +299,7 @@ class MessagesChatRepository {
         };
       }
 
-      final body = <String, String>{
-        'user_id': userId,
-        'user_type': userType,
-      };
+      final body = <String, String>{'user_id': userId, 'user_type': userType};
       if (requestingStaffId != null && requestingStaffId.isNotEmpty) {
         body['requesting_staff_id'] = requestingStaffId;
       }
@@ -467,20 +464,32 @@ class MessagesChatRepository {
   /// Upload a chat image. Returns image URL on success.
   static Future<Map<String, dynamic>> uploadChatImage(File imageFile) async {
     try {
-      final uri = Uri.parse('${ApiClient.baseUrl}/mobile_apis/upload_chat_image.php');
+      final uri = Uri.parse(
+        '${ApiClient.baseUrl}/mobile_apis/upload_chat_image.php',
+      );
       final request = http.MultipartRequest('POST', uri);
-      request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
-      final streamed = await request.send().timeout(const Duration(seconds: 30));
+      request.files.add(
+        await http.MultipartFile.fromPath('image', imageFile.path),
+      );
+      final streamed = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return {'success': false, 'error': 'Upload failed: ${response.statusCode}'};
+        return {
+          'success': false,
+          'error': 'Upload failed: ${response.statusCode}',
+        };
       }
       final data = (await _decodeJson(response.body)) as Map<String, dynamic>?;
       if (data == null) return {'success': false, 'error': 'Invalid response'};
       if (data['success'] == true && data['image_url'] != null) {
         return {'success': true, 'image_url': data['image_url'] as String};
       }
-      return {'success': false, 'error': data['error']?.toString() ?? 'Upload failed'};
+      return {
+        'success': false,
+        'error': data['error']?.toString() ?? 'Upload failed',
+      };
     } on Exception catch (e) {
       return {'success': false, 'error': e.toString()};
     }
@@ -492,12 +501,14 @@ class MessagesChatRepository {
     void Function(int sent, int total)? onProgress,
   }) async {
     try {
-      final dio = Dio(BaseOptions(
-        baseUrl: ApiClient.baseUrl,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 60),
-        sendTimeout: const Duration(seconds: 60),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: ApiClient.baseUrl,
+          connectTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 60),
+        ),
+      );
       final formData = FormData.fromMap({
         'document': await MultipartFile.fromFile(
           documentFile.path,
@@ -524,7 +535,10 @@ class MessagesChatRepository {
           'filename': data['filename'] as String?,
         };
       }
-      return {'success': false, 'error': data['error']?.toString() ?? 'Upload failed'};
+      return {
+        'success': false,
+        'error': data['error']?.toString() ?? 'Upload failed',
+      };
     } on DioException catch (e) {
       return {'success': false, 'error': e.message ?? e.toString()};
     } on Exception catch (e) {
@@ -532,8 +546,35 @@ class MessagesChatRepository {
     }
   }
 
+  /// Download a file from [url] and save to [path]. [onProgress] is called with (received, total).
+  static Future<String?> _downloadFile(
+    String url,
+    String path, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    try {
+      final dio = Dio();
+      await dio.download(
+        url,
+        path,
+        onReceiveProgress: onProgress,
+      );
+      return path;
+    } on DioException catch (e) {
+      debugPrint('_downloadFile: ${e.message}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('_downloadFile: $e');
+      return null;
+    }
+  }
+
   /// Download a document from [url] and save as [filename]. Returns local file path on success.
-  static Future<String?> downloadChatDocument(String url, String filename) async {
+  static Future<String?> downloadChatDocument(
+    String url,
+    String filename, {
+    void Function(int received, int total)? onProgress,
+  }) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final downloadsDir = Directory('${dir.path}/downloads');
@@ -542,14 +583,30 @@ class MessagesChatRepository {
       }
       final safeName = filename.replaceAll(RegExp(r'[^\w\.\-]'), '_');
       final path = '${downloadsDir.path}/$safeName';
-      final dio = Dio();
-      await dio.download(url, path);
-      return path;
-    } on DioException catch (e) {
-      debugPrint('downloadChatDocument: ${e.message}');
-      return null;
+      return await _downloadFile(url, path, onProgress: onProgress);
     } on Exception catch (e) {
       debugPrint('downloadChatDocument: $e');
+      return null;
+    }
+  }
+
+  /// Download an image from [url] and save as [filename]. Returns local file path on success.
+  static Future<String?> downloadChatImage(
+    String url,
+    String filename, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final downloadsDir = Directory('${dir.path}/downloads');
+      if (!await downloadsDir.exists()) {
+        await downloadsDir.create(recursive: true);
+      }
+      final safeName = filename.replaceAll(RegExp(r'[^\w\.\-]'), '_');
+      final path = '${downloadsDir.path}/$safeName';
+      return await _downloadFile(url, path, onProgress: onProgress);
+    } on Exception catch (e) {
+      debugPrint('downloadChatImage: $e');
       return null;
     }
   }

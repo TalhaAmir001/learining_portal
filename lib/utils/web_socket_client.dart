@@ -47,6 +47,8 @@ class WebSocketClient {
   Function(Map<String, dynamic>)? onNewMessage;
   Function(Map<String, dynamic>)? onMessageSent;
   Function(Map<String, dynamic>)? onMessagesReceived;
+  /// Called when server broadcasts a new notice (notice board); payload has 'notice' map.
+  Function(Map<String, dynamic>)? onNewNotice;
   Function(String)? onError;
   Function()? onDisconnected;
   Function()? onReconnecting;
@@ -221,6 +223,10 @@ class WebSocketClient {
           _handleMessages(data);
           break;
 
+        case 'new_notice':
+          _handleNewNotice(data);
+          break;
+
         case 'error':
           _handleServerError(data);
           break;
@@ -269,6 +275,12 @@ class WebSocketClient {
   void _handleMessages(Map<String, dynamic> data) {
     debugPrint('WebSocketClient: Messages received');
     onMessagesReceived?.call(data);
+  }
+
+  /// Handle new notice broadcast (notice board)
+  void _handleNewNotice(Map<String, dynamic> data) {
+    debugPrint('WebSocketClient: New notice received');
+    onNewNotice?.call(data);
   }
 
   /// Handle server error
