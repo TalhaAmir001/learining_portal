@@ -1,0 +1,12 @@
+# Firebase Service Account File
+# NEVER commit this file to version control!
+firebase-service-account.json
+**/firebase-service-account.json
+*.json
+!package.json
+!composer.json
+!tsconfig.json
+
+# But allow specific JSON files if needed
+!google-services.json
+!firebase-options.json
