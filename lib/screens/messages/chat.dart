@@ -3,12 +3,13 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:learining_portal/providers/messages/chat_provider.dart';
-import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/models/user_model.dart';
-import 'package:learining_portal/utils/widgets/messages/message_bubble.dart';
-import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
+import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/providers/messages/chat_provider.dart';
+import 'package:learining_portal/services/notification_service.dart';
+import 'package:learining_portal/utils/app_colors.dart';
+import 'package:learining_portal/utils/widgets/messages/message_bubble.dart';
 import 'package:provider/provider.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -274,21 +275,43 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Report user'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.flag_outlined, color: AppColors.primaryBlue, size: 24),
+            const SizedBox(width: 10),
+            const Text('Report user'),
+          ],
+        ),
         content: TextField(
           controller: reasonController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Reason for report (optional)',
-            border: OutlineInputBorder(),
+            hintStyle: TextStyle(color: AppColors.textSecondary),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primaryBlue.withOpacity(0.3)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: AppColors.primaryBlue.withOpacity(0.2)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+            ),
+            filled: true,
+            fillColor: AppColors.backgroundLight,
           ),
           maxLines: 3,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(foregroundColor: AppColors.textSecondary),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          ElevatedButton(
             onPressed: () {
               final chatProvider = Provider.of<ChatProvider>(context, listen: false);
               chatProvider.reportUser(
@@ -298,9 +321,19 @@ class _ChatScreenState extends State<ChatScreen> {
               );
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Report submitted. Thank you.')),
+                SnackBar(
+                  content: const Text('Report submitted. Thank you.'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  backgroundColor: AppColors.primaryBlue,
+                ),
               );
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
             child: const Text('Submit'),
           ),
         ],
@@ -310,83 +343,141 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
     final otherUser = widget.otherUser;
 
     if (otherUser == null && widget.chatId == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Chat')),
-        body: const Center(child: Text('Error: No user or chat ID provided')),
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [AppColors.primaryBlue, AppColors.backgroundLight],
+              stops: [0.0, 0.5],
+            ),
+          ),
+          child: SafeArea(
+            child: Center(
+              child: Text(
+                'Error: No user or chat ID provided',
+                style: theme.textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary),
+              ),
+            ),
+          ),
+        ),
       );
     }
 
     return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: colorScheme.primary,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: otherUser != null
-            ? Row(
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: Theme.of(
-                      context,
-                    ).colorScheme.primaryContainer,
-                    backgroundImage:
-                        otherUser.photoUrl != null &&
-                            otherUser.photoUrl!.isNotEmpty
-                        ? NetworkImage(otherUser.photoUrl!)
-                        : null,
-                    child:
-                        otherUser.photoUrl == null ||
-                            otherUser.photoUrl!.isEmpty
-                        ? Icon(
-                            Icons.person,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onPrimaryContainer,
-                            size: 18,
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      otherUser.fullName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+      backgroundColor: AppColors.backgroundLight,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Gradient app bar
+            Container(
+              padding: const EdgeInsets.fromLTRB(8, 8, 4, 12),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primaryBlue, AppColors.secondaryPurple],
+                ),
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 8,
+                    offset: Offset(0, 4),
                   ),
                 ],
-              )
-            : const Text('Chat', style: TextStyle(color: Colors.white)),
-        actions: otherUser != null
-            ? [
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, color: Colors.white),
-                  onSelected: (value) {
-                    if (value == 'report') _showReportDialog(context, otherUser);
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(value: 'report', child: Text('Report user')),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                  if (otherUser != null) ...[
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: Colors.white.withOpacity(0.3),
+                      backgroundImage:
+                          otherUser.photoUrl != null &&
+                                  otherUser.photoUrl!.isNotEmpty
+                              ? NetworkImage(otherUser.photoUrl!)
+                              : null,
+                      child:
+                          otherUser.photoUrl == null ||
+                                  otherUser.photoUrl!.isEmpty
+                              ? const Icon(
+                                  Icons.person_rounded,
+                                  color: Colors.white,
+                                  size: 22,
+                                )
+                              : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        otherUser.fullName,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                      color: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      onSelected: (value) {
+                        if (value == 'report') _showReportDialog(context, otherUser);
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'report',
+                          child: Row(
+                            children: [
+                              Icon(Icons.flag_outlined, size: 20),
+                              SizedBox(width: 12),
+                              Text('Report user'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Chat',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ],
-                ),
-              ]
-            : null,
-      ),
-      body: Column(
-        children: [
-          // Messages List
-          Expanded(
+                ],
+              ),
+            ),
+            // Messages List
+            Expanded(
             child: Consumer<ChatProvider>(
               builder: (context, chatProvider, child) {
                 // Update notification service when chatId becomes available
@@ -400,61 +491,95 @@ class _ChatScreenState extends State<ChatScreen> {
                   });
                 }
                 if (chatProvider.isLoading && chatProvider.messages.isEmpty) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (chatProvider.errorMessage != null &&
-                    chatProvider.messages.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          Icons.error_outline,
-                          size: 64,
-                          color: Colors.grey[400],
+                        CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.accentTeal),
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          chatProvider.errorMessage!,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 16,
+                          'Loading conversation...',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: AppColors.textSecondary,
                           ),
-                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),
                   );
                 }
 
+                if (chatProvider.errorMessage != null &&
+                    chatProvider.messages.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.08),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.error_outline_rounded,
+                              size: 48,
+                              color: Colors.red.shade400,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            chatProvider.errorMessage!,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: AppColors.textPrimary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
                 if (chatProvider.messages.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.chat_bubble_outline,
-                          size: 64,
-                          color: Colors.grey[400],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No messages yet',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 16,
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: AppColors.accentTeal.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              size: 56,
+                              color: AppColors.accentTeal.withOpacity(0.7),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Start the conversation!',
-                          style: TextStyle(
-                            color: Colors.grey[500],
-                            fontSize: 14,
+                          const SizedBox(height: 20),
+                          Text(
+                            'No messages yet',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 8),
+                          Text(
+                            'Start the conversation!',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }
@@ -509,7 +634,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               chatProvider.isLoadingMore
                                   ? 'Loading...'
                                   : 'Load older messages',
-                              style: TextStyle(color: colorScheme.primary),
+                              style: const TextStyle(color: AppColors.primaryBlue),
                             ),
                           ),
                         ),
@@ -532,87 +657,127 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
 
-          // Message Input
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.image_outlined, color: colorScheme.primary),
-                      onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendImage,
-                      tooltip: 'Send image',
-                    ),
-                    IconButton(
-                      icon: _isUploadingDocument
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(Icons.attach_file, color: colorScheme.primary),
-                      onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendDocument,
-                      tooltip: 'Send document',
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: 'Type a message...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[200],
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
-                          ),
+            // Message Input
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primaryBlue.withOpacity(0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          Icons.image_outlined,
+                          color: AppColors.accentTeal,
+                          size: 26,
                         ),
-                        maxLines: null,
-                        textCapitalization: TextCapitalization.sentences,
-                        onSubmitted: (_) => _sendMessage(),
+                        onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendImage,
+                        tooltip: 'Send image',
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    CircleAvatar(
-                      backgroundColor: _isSending
-                          ? Colors.grey
-                          : colorScheme.primary,
-                      child: IconButton(
-                        icon: _isSending
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
+                      IconButton(
+                        icon: _isUploadingDocument
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
-                                  ),
+                                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.accentTeal),
                                 ),
                               )
-                            : const Icon(Icons.send, color: Colors.white),
-                        onPressed: _isSending ? null : _sendMessage,
+                            : Icon(
+                                Icons.attach_file_rounded,
+                                color: AppColors.accentTeal,
+                                size: 24,
+                              ),
+                        onPressed: _isUploadingImage || _isUploadingDocument || _isSending ? null : _pickAndSendDocument,
+                        tooltip: 'Send document',
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          decoration: InputDecoration(
+                            hintText: 'Type a message...',
+                            hintStyle: TextStyle(color: AppColors.textSecondary.withOpacity(0.8)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide(color: AppColors.primaryBlue.withOpacity(0.15)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: const BorderSide(color: AppColors.accentTeal, width: 1.5),
+                            ),
+                            filled: true,
+                            fillColor: AppColors.backgroundLight,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                          ),
+                          maxLines: null,
+                          textCapitalization: TextCapitalization.sentences,
+                          onSubmitted: (_) => _sendMessage(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: _isSending ? null : _sendMessage,
+                          borderRadius: BorderRadius.circular(24),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              gradient: _isSending
+                                  ? null
+                                  : const LinearGradient(
+                                      colors: [AppColors.primaryBlue, AppColors.secondaryPurple],
+                                    ),
+                              color: _isSending ? AppColors.textSecondary.withOpacity(0.3) : null,
+                              shape: BoxShape.circle,
+                              boxShadow: _isSending
+                                  ? null
+                                  : [
+                                      BoxShadow(
+                                        color: AppColors.primaryBlue.withOpacity(0.3),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                            ),
+                            child: _isSending
+                                ? const Padding(
+                                    padding: EdgeInsets.all(14),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                    ),
+                                  )
+                                : const Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

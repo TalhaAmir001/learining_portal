@@ -12,6 +12,7 @@ import 'package:learining_portal/network/firebase_options.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/main.dart';
 import 'package:learining_portal/screens/messages/chat.dart';
+import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:provider/provider.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
@@ -61,19 +62,37 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       >()
       ?.createNotificationChannel(androidChannel);
 
-  // Show notification only for chat messages (have chatId or notification payload)
   final chatId = message.data['chatId'] ?? message.data['chat_id'];
-  final title =
-      message.notification?.title ?? message.data['title'] ?? 'New message';
-  final body =
-      message.notification?.body ??
-      message.data['message'] ??
-      message.data['body'] ??
-      'You have a new message';
+  final isNotice = message.data['type'] == 'notice' ||
+      message.data['notification_type'] == 'notice' ||
+      message.data['notice_id'] != null;
 
-  if (chatId != null || message.notification != null) {
-    // Use positive id for Android compatibility when app is killed
-    final id = (chatId?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
+  final String title;
+  final String body;
+  final String? payload;
+
+  if (isNotice) {
+    title = 'Notice';
+    body = (message.data['title'] ??
+            message.data['notice_title'] ??
+            message.notification?.title ??
+            message.notification?.body ??
+            'New notice')
+        .toString();
+    payload = 'notice';
+  } else {
+    title =
+        message.notification?.title ?? message.data['title'] ?? 'New message';
+    body =
+        message.notification?.body ??
+        message.data['message'] ??
+        message.data['body'] ??
+        'You have a new message';
+    payload = chatId;
+  }
+
+  if (chatId != null || message.notification != null || isNotice) {
+    final id = (payload?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
     await localNotifications.show(
       id: id,
       title: title,
@@ -95,7 +114,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           presentSound: true,
         ),
       ),
-      payload: chatId,
+      payload: payload,
     );
   }
 }
@@ -429,15 +448,34 @@ class NotificationService {
   void _handleForegroundMessage(RemoteMessage message) {
     debugPrint('Received foreground message: ${message.messageId}');
 
-    // Show local notification (from notification payload or data)
-    final title =
-        message.notification?.title ?? message.data['title'] ?? 'New message';
-    final body =
-        message.notification?.body ??
-        message.data['message'] ??
-        message.data['body'] ??
-        '';
     final chatId = message.data['chatId'] ?? message.data['chat_id'];
+    final isNotice = message.data['type'] == 'notice' ||
+        message.data['notification_type'] == 'notice' ||
+        message.data['notice_id'] != null;
+
+    final String title;
+    final String body;
+    final String? payload;
+
+    if (isNotice) {
+      title = 'Notice';
+      body = (message.data['title'] ??
+              message.data['notice_title'] ??
+              message.notification?.title ??
+              message.notification?.body ??
+              'New notice')
+          .toString();
+      payload = 'notice';
+    } else {
+      title =
+          message.notification?.title ?? message.data['title'] ?? 'New message';
+      body =
+          message.notification?.body ??
+          message.data['message'] ??
+          message.data['body'] ??
+          '';
+      payload = chatId;
+    }
 
     if (title.isNotEmpty || body.isNotEmpty) {
       _localNotifications.show(
@@ -460,7 +498,7 @@ class NotificationService {
             presentSound: true,
           ),
         ),
-        payload: chatId,
+        payload: payload,
       );
     }
   }
@@ -468,17 +506,43 @@ class NotificationService {
   // Handle notification tap (when app is in background or terminated)
   void _handleNotificationTap(RemoteMessage message) {
     debugPrint('Notification tapped: ${message.messageId}');
-    final chatId = message.data['chatId'];
-    if (chatId != null && navigatorKey.currentContext != null) {
-      _navigateToChat(chatId);
+    final isNotice = message.data['type'] == 'notice' ||
+        message.data['notification_type'] == 'notice' ||
+        message.data['notice_id'] != null;
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    if (isNotice) {
+      _navigateToNoticeBoard(context);
+    } else {
+      final chatId = message.data['chatId'];
+      if (chatId != null) _navigateToChat(chatId);
     }
   }
 
   // Handle local notification tap
   void _onNotificationTapped(NotificationResponse response) {
     debugPrint('Local notification tapped: ${response.payload}');
-    if (response.payload != null && navigatorKey.currentContext != null) {
-      _navigateToChat(response.payload!);
+    final payload = response.payload;
+    final context = navigatorKey.currentContext;
+    if (context == null || payload == null) return;
+    if (payload == 'notice') {
+      _navigateToNoticeBoard(context);
+    } else {
+      _navigateToChat(payload);
+    }
+  }
+
+  void _navigateToNoticeBoard(BuildContext context) {
+    try {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const NoticeBoardScreen(),
+        ),
+      );
+      debugPrint('Navigated to Notice Board');
+    } catch (e) {
+      debugPrint('Error navigating to notice board: $e');
     }
   }
 

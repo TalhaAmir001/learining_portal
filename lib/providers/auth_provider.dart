@@ -30,6 +30,7 @@ class AuthProvider with ChangeNotifier {
 
   // Callback for when new messages are received
   Function(Map<String, dynamic>)? onNewMessageReceived;
+
   /// Callback for when a new notice is broadcast (notice board); app can refresh notice list.
   Function(Map<String, dynamic>)? onNewNoticeReceived;
 
@@ -203,7 +204,14 @@ class AuthProvider with ChangeNotifier {
 
   // Convenience getters for backward compatibility
   String? get userEmail => _currentUser?.email;
+  String? get userName => _currentUser?.fullName;
   UserType? get userType => _currentUser?.userType;
+  /// Admission number for student/guardian (from additionalData).
+  String? get userAdmissionNo {
+    final v = _currentUser?.additionalData?['admission_no'];
+    if (v == null) return null;
+    return v is String ? v : v.toString();
+  }
   bool get isWebSocketConnected => _isWebSocketConnected;
 
   // Convert UserType enum to string
@@ -405,7 +413,9 @@ class AuthProvider with ChangeNotifier {
     if (_wsClient == null || !_wsClient!.isConnected) {
       return;
     }
-    debugPrint('AuthProvider: Disconnecting WebSocket for background (server will use FCM)');
+    debugPrint(
+      'AuthProvider: Disconnecting WebSocket for background (server will use FCM)',
+    );
     _shouldMaintainConnection = false;
     _wsClient!.disconnect();
     _isWebSocketConnected = false;
@@ -473,7 +483,11 @@ class AuthProvider with ChangeNotifier {
           .collection('user')
           .doc(documentId)
           .set(user.toFirestore(), SetOptions(merge: true))
-          .then((_) => debugPrint('User saved to Firestore with document ID: $documentId'))
+          .then(
+            (_) => debugPrint(
+              'User saved to Firestore with document ID: $documentId',
+            ),
+          )
           .catchError((e) => debugPrint('Error saving user to Firestore: $e')),
     );
   }

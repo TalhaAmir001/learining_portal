@@ -14,6 +14,8 @@ class SendNotificationDataModel {
   final String isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final bool isPinned;
+  final int? days;
 
   SendNotificationDataModel({
     required this.id,
@@ -30,6 +32,8 @@ class SendNotificationDataModel {
     this.isActive = 'no',
     this.createdAt,
     this.updatedAt,
+    this.isPinned = false,
+    this.days,
   });
 
   factory SendNotificationDataModel.fromJson(Map<String, dynamic> json) {
@@ -48,7 +52,17 @@ class SendNotificationDataModel {
       isActive: (json['is_active'] as String?) ?? 'no',
       createdAt: _parseDateTime(json['created_at']),
       updatedAt: _parseDateTime(json['updated_at']),
+      isPinned: _parseBool(json['is_pinned']),
+      days: _parseIntNullable(json['days']),
     );
+  }
+
+  static bool _parseBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int) return v == 1;
+    final s = v.toString().trim().toLowerCase();
+    return s == '1' || s == 'yes' || s == 'true';
   }
 
   static int _parseInt(dynamic v) {

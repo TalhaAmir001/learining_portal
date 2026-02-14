@@ -10,6 +10,8 @@ class NoticeBoardModel {
   final String? attachment;
   final String? createdBy;
   final DateTime? createdAt;
+  final bool isPinned;
+  final int? days;
 
   NoticeBoardModel({
     required this.id,
@@ -20,6 +22,8 @@ class NoticeBoardModel {
     this.attachment,
     this.createdBy,
     this.createdAt,
+    this.isPinned = false,
+    this.days,
   });
 
   factory NoticeBoardModel.fromSendNotification(SendNotificationDataModel n) {
@@ -32,6 +36,8 @@ class NoticeBoardModel {
       attachment: n.attachment,
       createdBy: n.createdBy,
       createdAt: n.createdAt,
+      isPinned: n.isPinned,
+      days: n.days,
     );
   }
 }

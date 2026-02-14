@@ -261,7 +261,8 @@ class UserModel {
     }
 
     return UserModel(
-      uid: result.userId.toString(), // Use user_id only (avoids duplicate students: id vs user_id)
+      uid: result.userId
+          .toString(), // Use user_id only (avoids duplicate students: id vs user_id)
       email: result.email ?? result.username ?? '',
       displayName: result.fullName.isNotEmpty
           ? result.fullName
