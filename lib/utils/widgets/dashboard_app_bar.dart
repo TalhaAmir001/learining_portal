@@ -112,11 +112,6 @@ class DashboardAppBar extends StatelessWidget {
         width: 48,
         height: 48,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [AppColors.primaryBlue, AppColors.secondaryPurple],
-          ),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
@@ -131,22 +126,14 @@ class DashboardAppBar extends StatelessWidget {
             ),
           ],
         ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Background pattern
-            Positioned(
-              bottom: -5,
-              right: -5,
-              child: Icon(
-                Icons.school,
-                size: 30,
-                color: Colors.white.withOpacity(0.15),
-              ),
-            ),
-            // Main icon
-            const Icon(Icons.school_rounded, color: Colors.white, size: 26),
-          ],
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Image.asset(
+            'assets/icon/app_icon.jpg',
+            fit: BoxFit.cover,
+            width: 48,
+            height: 48,
+          ),
         ),
       ),
     );

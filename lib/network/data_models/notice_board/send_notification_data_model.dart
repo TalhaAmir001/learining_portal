@@ -16,6 +16,7 @@ class SendNotificationDataModel {
   final DateTime? updatedAt;
   final bool isPinned;
   final int? days;
+  final bool isRead;
 
   SendNotificationDataModel({
     required this.id,
@@ -34,6 +35,7 @@ class SendNotificationDataModel {
     this.updatedAt,
     this.isPinned = false,
     this.days,
+    this.isRead = true,
   });
 
   factory SendNotificationDataModel.fromJson(Map<String, dynamic> json) {
@@ -54,6 +56,7 @@ class SendNotificationDataModel {
       updatedAt: _parseDateTime(json['updated_at']),
       isPinned: _parseBool(json['is_pinned']),
       days: _parseIntNullable(json['days']),
+      isRead: _parseBool(json['is_read']),
     );
   }
 

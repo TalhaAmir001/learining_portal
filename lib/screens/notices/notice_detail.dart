@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_html/flutter_html.dart';
 import 'package:learining_portal/models/notice_board_model.dart';
 import 'package:learining_portal/providers/send_notifications_provider.dart';
 import 'package:learining_portal/utils/app_colors.dart';
+import 'package:learining_portal/utils/widgets/notice/message_card.dart';
+import 'package:learining_portal/utils/widgets/notice/meta_card.dart';
+import 'package:learining_portal/utils/widgets/notice/notice_app_bar.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-
-/// Normalizes HTML for the parser (e.g. line endings).
-String _normalizeHtml(String html) {
-  if (html.isEmpty) return html;
-  return html.replaceAll(RegExp(r'\r\n?'), '\n').trim();
-}
 
 /// Converts HTML to plain text for list/preview display (strips tags, extracts link URLs, decodes entities).
 /// Use this in notice_board_box and notice_board for message previews.
@@ -53,148 +49,6 @@ String htmlToPlainTextForPreview(String html) {
   return text.trim();
 }
 
-/// Builds style map for all HTML tags so they render accurately.
-Map<String, Style> _buildHtmlStyles(ThemeData theme, TextStyle baseStyle) {
-  const linkBlue = Color(0xFF1565C0);
-  return {
-    // Default / body
-    "body": Style(
-      color: AppColors.textPrimary,
-      fontSize: FontSize(baseStyle.fontSize ?? 16),
-      fontWeight: FontWeight.w400,
-      lineHeight: LineHeight(1.6),
-    ),
-    // Paragraphs
-    "p": Style(
-      margin: Margins.only(bottom: 8),
-      padding: HtmlPaddings.zero,
-    ),
-    // Links – blue, underlined, clickable via onLinkTap
-    "a": Style(
-      color: linkBlue,
-      fontWeight: FontWeight.w600,
-      textDecoration: TextDecoration.underline,
-      textDecorationColor: linkBlue,
-    ),
-    // Bold
-    "b": Style(fontWeight: FontWeight.bold),
-    "strong": Style(fontWeight: FontWeight.bold),
-    // Italic
-    "i": Style(fontStyle: FontStyle.italic),
-    "em": Style(fontStyle: FontStyle.italic),
-    // Underline
-    "u": Style(textDecoration: TextDecoration.underline),
-    // Headings
-    "h1": Style(
-      fontSize: FontSize(24),
-      fontWeight: FontWeight.bold,
-      margin: Margins.only(top: 12, bottom: 8),
-    ),
-    "h2": Style(
-      fontSize: FontSize(22),
-      fontWeight: FontWeight.bold,
-      margin: Margins.only(top: 10, bottom: 6),
-    ),
-    "h3": Style(
-      fontSize: FontSize(20),
-      fontWeight: FontWeight.bold,
-      margin: Margins.only(top: 10, bottom: 6),
-    ),
-    "h4": Style(
-      fontSize: FontSize(18),
-      fontWeight: FontWeight.w600,
-      margin: Margins.only(top: 8, bottom: 4),
-    ),
-    "h5": Style(
-      fontSize: FontSize(16),
-      fontWeight: FontWeight.w600,
-      margin: Margins.only(top: 8, bottom: 4),
-    ),
-    "h6": Style(
-      fontSize: FontSize(14),
-      fontWeight: FontWeight.w600,
-      margin: Margins.only(top: 6, bottom: 4),
-    ),
-    // Lists
-    "ul": Style(
-      margin: Margins.only(left: 16, top: 6, bottom: 6),
-      padding: HtmlPaddings.only(left: 16),
-    ),
-    "ol": Style(
-      margin: Margins.only(left: 16, top: 6, bottom: 6),
-      padding: HtmlPaddings.only(left: 16),
-    ),
-    "li": Style(
-      margin: Margins.only(bottom: 4),
-      padding: HtmlPaddings.zero,
-    ),
-    // Block & inline
-    "div": Style(
-      margin: Margins.zero,
-      padding: HtmlPaddings.zero,
-    ),
-    "span": Style(padding: HtmlPaddings.zero),
-    // Blockquote
-    "blockquote": Style(
-      margin: Margins.symmetric(vertical: 8, horizontal: 0),
-      padding: HtmlPaddings.only(left: 16, top: 8, bottom: 8),
-      border: Border(
-        left: BorderSide(
-          color: AppColors.primaryBlue.withOpacity(0.5),
-          width: 4,
-        ),
-      ),
-      color: AppColors.textSecondary,
-    ),
-    // Code & pre
-    "pre": Style(
-      margin: Margins.only(top: 8, bottom: 8),
-      padding: HtmlPaddings.all(12),
-      backgroundColor: AppColors.textPrimary.withOpacity(0.06),
-      whiteSpace: WhiteSpace.pre,
-      fontFamily: 'monospace',
-    ),
-    "code": Style(
-      fontFamily: 'monospace',
-      fontSize: FontSize(13),
-      backgroundColor: AppColors.textPrimary.withOpacity(0.06),
-    ),
-    // Horizontal rule
-    "hr": Style(
-      margin: Margins.symmetric(vertical: 12),
-    ),
-    // Subscript / superscript
-    "sub": Style(
-      fontSize: FontSize(12),
-      verticalAlign: VerticalAlign.sub,
-    ),
-    "sup": Style(
-      fontSize: FontSize(12),
-      verticalAlign: VerticalAlign.sup,
-    ),
-    // Strikethrough / delete / insert
-    "s": Style(textDecoration: TextDecoration.lineThrough),
-    "strike": Style(textDecoration: TextDecoration.lineThrough),
-    "del": Style(textDecoration: TextDecoration.lineThrough),
-    "ins": Style(textDecoration: TextDecoration.underline),
-    // Other inline
-    "mark": Style(backgroundColor: const Color(0xFFFFEB3B)),
-    "small": Style(fontSize: FontSize(12)),
-    "abbr": Style(),
-    "cite": Style(fontStyle: FontStyle.italic),
-    "q": Style(fontStyle: FontStyle.italic),
-    "dfn": Style(fontStyle: FontStyle.italic),
-    "kbd": Style(
-      fontFamily: 'monospace',
-      backgroundColor: AppColors.textPrimary.withOpacity(0.08),
-    ),
-    "samp": Style(fontFamily: 'monospace'),
-    "var": Style(fontStyle: FontStyle.italic),
-    // Line break – handled by tag
-    "br": Style(padding: HtmlPaddings.zero, margin: Margins.zero),
-  };
-}
-
 class NoticeDetailScreen extends StatefulWidget {
   const NoticeDetailScreen({super.key, required this.notice});
 
@@ -221,8 +75,18 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
   }
 
   static const List<String> _monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
 
   /// Readable date only: e.g. "13 February 2025"
@@ -280,7 +144,12 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildAppBar(context),
+              NoticeAppBar(
+                title: 'Notice',
+                subtitle: 'View details',
+                padding: const EdgeInsets.fromLTRB(4, 8, 12, 16),
+                iconContainerShadow: true,
+              ),
               Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(top: 12),
@@ -308,11 +177,17 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
                         children: [
                           _buildTitleCard(theme, notice),
                           const SizedBox(height: 16),
-                          _buildMetaCard(theme, notice),
+                          MetaCard(notice: notice),
                           if (notice.message != null &&
                               notice.message!.trim().isNotEmpty) ...[
                             const SizedBox(height: 16),
-                            _buildMessageCard(theme, notice),
+                            MessageCard(
+                              notice: notice,
+                              onLinkTap: (url) {
+                                // Handle URL tap
+                                _openUrl(url);
+                              },
+                            ),
                           ],
                           if (notice.attachment != null &&
                               notice.attachment!.isNotEmpty) ...[
@@ -332,80 +207,6 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildAppBar(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 12, 16),
-      child: Row(
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => Navigator.maybePop(context),
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.campaign_rounded,
-              color: Colors.white,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Notice',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.9),
-                    letterSpacing: 0.2,
-                  ),
-                ),
-                Text(
-                  'View details',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.white.withOpacity(0.75),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -476,229 +277,6 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
     );
   }
 
-  Widget _buildMetaCard(ThemeData theme, NoticeBoardModel notice) {
-    final hasPublishDate = notice.publishDate != null;
-    final hasNoticeDate = notice.date != null;
-    final hasAuthor =
-        notice.createdBy != null && notice.createdBy!.isNotEmpty;
-    final hasAnyDate = hasPublishDate || hasNoticeDate;
-    if (!hasAnyDate && !hasAuthor) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.primaryBlue.withOpacity(0.05),
-            AppColors.secondaryPurple.withOpacity(0.04),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.primaryBlue.withOpacity(0.08),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Dates row: Publish date and Notice date
-          if (hasAnyDate) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryBlue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.calendar_today_rounded,
-                    size: 18,
-                    color: AppColors.primaryBlue,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (hasPublishDate) ...[
-                        Text(
-                          'Publish date',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatDateTimeReadable(notice.publishDate),
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                      if (hasPublishDate && hasNoticeDate) const SizedBox(height: 10),
-                      if (hasNoticeDate) ...[
-                        Text(
-                          'Notice date',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatDateTimeReadable(notice.date),
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-          if (hasAnyDate && hasAuthor) const SizedBox(height: 14),
-          // Author row
-          if (hasAuthor)
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.secondaryPurple.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.person_outline_rounded,
-                    size: 18,
-                    color: AppColors.secondaryPurple,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Author',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: AppColors.textSecondary,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        notice.createdBy!,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessageCard(ThemeData theme, NoticeBoardModel notice) {
-    final raw = notice.message!.trim();
-    if (raw.isEmpty) return const SizedBox.shrink();
-
-    final htmlData = _normalizeHtml(raw);
-    final baseStyle = theme.textTheme.bodyLarge ?? const TextStyle();
-    final styles = _buildHtmlStyles(theme, baseStyle);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(
-          color: AppColors.accentTeal.withOpacity(0.12),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.accentTeal.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.description_rounded,
-                  size: 20,
-                  color: AppColors.accentTeal,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Message',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                  letterSpacing: 0.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.only(left: 12),
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(
-                  color: AppColors.accentTeal.withOpacity(0.35),
-                  width: 3,
-                ),
-              ),
-            ),
-            child: Html(
-              data: htmlData,
-              style: styles,
-              shrinkWrap: true,
-              onLinkTap: (url, attributes, element) {
-                if (url != null && url.isNotEmpty) {
-                  _openUrl(url);
-                }
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAttachmentCard(ThemeData theme, NoticeBoardModel notice) {
     return Material(
       color: Colors.transparent,
@@ -717,9 +295,7 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
               ],
             ),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: AppColors.accentTeal.withOpacity(0.2),
-            ),
+            border: Border.all(color: AppColors.accentTeal.withOpacity(0.2)),
           ),
           child: Row(
             children: [

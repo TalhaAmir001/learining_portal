@@ -55,13 +55,23 @@ class SendNotificationsProvider with ChangeNotifier {
     notifyListeners();
 
     final apiUserType = userTypeToApiString(userType);
+    int? studentId;
+    String? sessionId;
+    if (userType == UserType.student) {
+      final uid = _authProvider?.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        studentId = int.tryParse(uid);
+      }
+      final s = _authProvider?.currentUser?.additionalData?['session_id'];
+      sessionId = s?.toString();
+    }
     final list = await NoticeBoardRepository.getSendNotifications(
       userType: apiUserType,
+      studentId: studentId,
+      sessionId: sessionId,
     );
 
-    _notices = list
-        .map(NoticeBoardModel.fromSendNotification)
-        .toList()
+    _notices = list.map(NoticeBoardModel.fromSendNotification).toList()
       ..sort((a, b) {
         final da = a.publishDate ?? a.date ?? a.createdAt ?? DateTime(0);
         final db = b.publishDate ?? b.date ?? b.createdAt ?? DateTime(0);

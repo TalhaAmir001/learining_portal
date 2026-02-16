@@ -1,8 +1,10 @@
 // lib/utils/widgets/notice_board_box.dart
 import 'package:flutter/material.dart';
 import 'package:learining_portal/models/notice_board_model.dart';
+import 'package:learining_portal/providers/send_notifications_provider.dart';
 import 'package:learining_portal/screens/notices/notice_detail.dart';
 import 'package:learining_portal/utils/app_colors.dart';
+import 'package:provider/provider.dart';
 
 class NoticeBoardBox extends StatelessWidget {
   final List<NoticeBoardModel> notices;
@@ -240,7 +242,11 @@ class NoticeBoardBox extends StatelessWidget {
             MaterialPageRoute(
               builder: (context) => NoticeDetailScreen(notice: notice),
             ),
-          );
+          ).then((_) {
+            if (context.mounted) {
+              context.read<SendNotificationsProvider>().loadNotices();
+            }
+          });
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -294,6 +300,18 @@ class NoticeBoardBox extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (!notice.isRead) ...[
+                          Container(
+                            margin: const EdgeInsets.only(top: 5),
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
                         if (notice.isPinned) ...[
                           Icon(
                             Icons.push_pin_rounded,
@@ -317,7 +335,9 @@ class NoticeBoardBox extends StatelessWidget {
                     ),
                     if (notice.message != null) ...[
                       () {
-                        final preview = htmlToPlainTextForPreview(notice.message!);
+                        final preview = htmlToPlainTextForPreview(
+                          notice.message!,
+                        );
                         if (preview.isEmpty) return const SizedBox.shrink();
                         return Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -351,7 +371,9 @@ class NoticeBoardBox extends StatelessWidget {
                                 Text(
                                   'Publish: ${_formatDateShort(notice.publishDate)}',
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(0.8),
+                                    color: AppColors.textSecondary.withOpacity(
+                                      0.8,
+                                    ),
                                     fontSize: 10,
                                   ),
                                 ),
@@ -359,15 +381,20 @@ class NoticeBoardBox extends StatelessWidget {
                                 Text(
                                   'Notice: ${_formatDateShort(notice.date)}',
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(0.8),
+                                    color: AppColors.textSecondary.withOpacity(
+                                      0.8,
+                                    ),
                                     fontSize: 10,
                                   ),
                                 ),
-                              if (notice.publishDate == null && notice.date == null)
+                              if (notice.publishDate == null &&
+                                  notice.date == null)
                                 Text(
                                   '—',
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(0.7),
+                                    color: AppColors.textSecondary.withOpacity(
+                                      0.7,
+                                    ),
                                     fontSize: 10,
                                   ),
                                 ),
@@ -434,7 +461,20 @@ class NoticeBoardBox extends StatelessWidget {
 
   String _formatDateShort(DateTime? date) {
     if (date == null) return '—';
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 }

@@ -193,7 +193,7 @@ class _AuthScreenState extends State<AuthScreen>
           },
         ),
         Text(
-          'Welcome to Learning Portal',
+          'Welcome to GCSE with Rosi',
           style: Theme.of(context).textTheme.headlineLarge?.copyWith(
             fontWeight: FontWeight.bold,
             color: colorScheme.primary,
@@ -301,15 +301,18 @@ class _AuthScreenState extends State<AuthScreen>
           // Username/Email Field (Username for Student/Guardian, Email for Teacher/Admin)
           CustomTextField(
             controller: _emailController,
-            label: (_selectedUserType == UserType.student ||
+            label:
+                (_selectedUserType == UserType.student ||
                     _selectedUserType == UserType.guardian)
                 ? 'Username'
                 : 'Email',
-            icon: (_selectedUserType == UserType.student ||
+            icon:
+                (_selectedUserType == UserType.student ||
                     _selectedUserType == UserType.guardian)
                 ? Icons.person_outlined
                 : Icons.email_outlined,
-            keyboardType: (_selectedUserType == UserType.student ||
+            keyboardType:
+                (_selectedUserType == UserType.student ||
                     _selectedUserType == UserType.guardian)
                 ? TextInputType.text
                 : TextInputType.emailAddress,

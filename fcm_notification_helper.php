@@ -304,6 +304,46 @@ class FCMNotificationHelper {
     }
     
     /**
+     * Send FCM data-only message (no automatic notification).
+     * Use for notices so the Flutter app's background handler shows a single notification with title "Notice" and notice title as body.
+     * When app is closed/background, only the handler runs – no duplicate system notification.
+     */
+    public function sendDataOnlyMessage($fcmToken, array $data) {
+        if (empty($this->projectId)) {
+            echo "FCM: Project ID not configured. Cannot send data-only message.\n";
+            return false;
+        }
+        if (empty($fcmToken)) {
+            echo "FCM: No FCM token provided. Cannot send data-only message.\n";
+            return false;
+        }
+        $accessToken = $this->getAccessToken();
+        if (!$accessToken) {
+            echo "FCM: Failed to get access token. Cannot send data-only message.\n";
+            return false;
+        }
+        $data = array_map('strval', $data);
+        $message = [
+            'message' => [
+                'token' => $fcmToken,
+                'data' => $data,
+                'android' => [
+                    'priority' => 'high',
+                ],
+                'apns' => [
+                    'headers' => ['apns-priority' => '10'],
+                    'payload' => [
+                        'aps' => [
+                            'content-available' => 1,
+                        ]
+                    ]
+                ]
+            ]
+        ];
+        return $this->sendFCMRequest($message);
+    }
+
+    /**
      * Send FCM notification using v1 API
      */
     public function sendNotification($fcmToken, $title, $body, $data = []) {
@@ -358,10 +398,16 @@ class FCMNotificationHelper {
             ]
         ];
         
-        // Send via v1 API
+        return $this->sendFCMRequest($message);
+    }
+
+    /**
+     * Execute FCM v1 API request
+     */
+    private function sendFCMRequest(array $message) {
         $url = "https://fcm.googleapis.com/v1/projects/{$this->projectId}/messages:send";
         $headers = [
-            'Authorization: Bearer ' . $accessToken,
+            'Authorization: Bearer ' . $this->getAccessToken(),
             'Content-Type: application/json'
         ];
         
@@ -384,19 +430,73 @@ class FCMNotificationHelper {
         }
         
         if ($httpCode == 200) {
-            echo "FCM: Notification sent successfully to token: " . substr($fcmToken, 0, 20) . "...\n";
+            echo "FCM: Notification sent successfully to token: " . substr($message['message']['token'], 0, 20) . "...\n";
             return true;
         } else {
             echo "FCM: Failed to send notification. HTTP Code: $httpCode, Response: $response\n";
             return false;
         }
     }
-    
+
+    /**
+     * Get FCM tokens for notice board push grouped by role.
+     * Only includes roles that are requested (visible). Student/staff from fl_chat_users; parent from students.parent_app_key.
+     *
+     * @param bool $visibleStudent
+     * @param bool $visibleStaff
+     * @param bool $visibleParent
+     * @return array ['student' => string[], 'staff' => string[], 'parent' => string[]] (only requested roles have non-empty arrays)
+     */
+    public function getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent) {
+        $mysqli = $this->getDbConnection();
+        $byRole = ['student' => [], 'staff' => [], 'parent' => []];
+        if (!$mysqli) {
+            return $byRole;
+        }
+
+        if ($visibleStudent) {
+            $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE user_type = 'student' AND student_id IS NOT NULL AND student_id != 0 AND fcm_token IS NOT NULL AND fcm_token != ''";
+            $result = $mysqli->query($sql);
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+                    if (!empty($row['fcm_token'])) {
+                        $byRole['student'][] = $row['fcm_token'];
+                    }
+                }
+            }
+        }
+
+        if ($visibleStaff) {
+            $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE user_type = 'staff' AND staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != ''";
+            $result = $mysqli->query($sql);
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+                    if (!empty($row['fcm_token'])) {
+                        $byRole['staff'][] = $row['fcm_token'];
+                    }
+                }
+            }
+        }
+
+        if ($visibleParent) {
+            $sql = "SELECT DISTINCT parent_app_key AS fcm_token FROM students WHERE parent_app_key IS NOT NULL AND TRIM(parent_app_key) != ''";
+            $result = $mysqli->query($sql);
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+                    if (!empty($row['fcm_token'])) {
+                        $byRole['parent'][] = $row['fcm_token'];
+                    }
+                }
+            }
+        }
+
+        $mysqli->close();
+        return $byRole;
+    }
+
     /**
      * Get FCM tokens for notice board push based on visibility (visible_student, visible_staff, visible_parent).
-     * Returns tokens from fl_chat_users: students (user_type=student), staff (user_type=staff, staff_id != 0).
-     * Parent/guardian: if your app stores them in fl_chat_users with user_type e.g. 'parent', add a column
-     * or use the same as student; here we treat parent as student for token lookup if no parent_id column.
+     * Returns a flat list of tokens (all visible roles combined). Kept for backward compatibility.
      *
      * @param bool $visibleStudent
      * @param bool $visibleStaff
@@ -404,40 +504,53 @@ class FCMNotificationHelper {
      * @return string[] FCM tokens
      */
     public function getFCMTokensForNoticeTarget($visibleStudent, $visibleStaff, $visibleParent) {
-        $mysqli = $this->getDbConnection();
-        if (!$mysqli) {
-            return [];
-        }
-        $conditions = [];
-        if ($visibleStudent) {
-            $conditions[] = "(user_type = 'student' AND student_id IS NOT NULL AND student_id != 0 AND fcm_token IS NOT NULL AND fcm_token != '')";
-        }
-        if ($visibleStaff) {
-            $conditions[] = "(user_type = 'staff' AND staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != '')";
-        }
-        if ($visibleParent) {
-            // If you have parent_id in fl_chat_users, add: (user_type = 'parent' AND parent_id IS NOT NULL ...)
-            // Otherwise parents may use the same app as students; include student tokens as proxy if no separate parent store
-            if (!$visibleStudent) {
-                $conditions[] = "(user_type = 'student' AND student_id IS NOT NULL AND fcm_token IS NOT NULL AND fcm_token != '')";
-            }
-        }
-        if (empty($conditions)) {
-            $mysqli->close();
-            return [];
-        }
-        $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE (" . implode(' OR ', $conditions) . ")";
-        $result = $mysqli->query($sql);
-        $tokens = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                if (!empty($row['fcm_token'])) {
-                    $tokens[] = $row['fcm_token'];
+        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent);
+        $tokens = array_merge(
+            $byRole['student'],
+            $byRole['staff'],
+            $byRole['parent']
+        );
+        return array_values(array_unique($tokens));
+    }
+
+    /**
+     * Send notice FCM in bulk per visible role: only to students if visible_student, only to staff if visible_staff, only to parents if visible_parent.
+     *
+     * @param bool   $visibleStudent
+     * @param bool   $visibleStaff
+     * @param bool   $visibleParent
+     * @param string $title
+     * @param string $body
+     * @param int|null $notificationId
+     * @return array ['success' => bool, 'sent' => int, 'by_role' => ['student' => int, 'staff' => int, 'parent' => int]]
+     */
+    public function sendNoticeToVisibleRoles($visibleStudent, $visibleStaff, $visibleParent, $title, $body, $notificationId = null) {
+        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent);
+        // Data-only message: app background handler shows one notification with title "Notice" and body = notice title (no duplicate system notification)
+        $data = [
+            'type' => 'notice',
+            'title' => $title,
+            'notification_id' => (string) ($notificationId !== null ? $notificationId : ''),
+            'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
+        ];
+        $sentByRole = ['student' => 0, 'staff' => 0, 'parent' => 0];
+        $totalSent = 0;
+
+        foreach (['student', 'staff', 'parent'] as $role) {
+            $tokens = isset($byRole[$role]) ? $byRole[$role] : [];
+            foreach ($tokens as $token) {
+                if ($this->sendDataOnlyMessage($token, $data)) {
+                    $sentByRole[$role]++;
+                    $totalSent++;
                 }
             }
         }
-        $mysqli->close();
-        return $tokens;
+
+        return [
+            'success' => true,
+            'sent'    => $totalSent,
+            'by_role' => $sentByRole,
+        ];
     }
 
     /**

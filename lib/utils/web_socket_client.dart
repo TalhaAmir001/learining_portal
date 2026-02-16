@@ -47,6 +47,7 @@ class WebSocketClient {
   Function(Map<String, dynamic>)? onNewMessage;
   Function(Map<String, dynamic>)? onMessageSent;
   Function(Map<String, dynamic>)? onMessagesReceived;
+
   /// Called when server broadcasts a new notice (notice board); payload has 'notice' map.
   Function(Map<String, dynamic>)? onNewNotice;
   Function(String)? onError;
@@ -417,11 +418,7 @@ class WebSocketClient {
   /// Request messages for a chat connection (paginated)
   /// [limit] - Max messages to return (default 30)
   /// [beforeId] - Load messages older than this id (for "load more")
-  void getMessages(
-    String chatConnectionId, {
-    int limit = 30,
-    int? beforeId,
-  }) {
+  void getMessages(String chatConnectionId, {int limit = 30, int? beforeId}) {
     final payload = <String, dynamic>{
       'action': 'get_messages',
       'chat_connection_id': chatConnectionId,
@@ -453,7 +450,8 @@ class WebSocketClient {
       'reported_user_id': reportedUserId,
       'reported_user_type': reportedUserType,
       'reason': reason,
-      if (chatConnectionId != null && chatConnectionId.isNotEmpty) 'chat_connection_id': chatConnectionId,
+      if (chatConnectionId != null && chatConnectionId.isNotEmpty)
+        'chat_connection_id': chatConnectionId,
     });
   }
 

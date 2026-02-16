@@ -1284,7 +1284,8 @@ class ChatWebSocketServer implements MessageComponentInterface
 
     /**
      * Check for pending notice broadcast file (written by CodeIgniter when a new notice is added)
-     * and broadcast new_notice to all connected clients so the app can refresh the notice board.
+     * and broadcast new_notice to connected clients. For student user_type only: when the notice
+     * has class_id and section_id, only students in that class/section receive the broadcast.
      */
     public function checkAndBroadcastNewNotice()
     {
@@ -1306,13 +1307,63 @@ class ChatWebSocketServer implements MessageComponentInterface
             'notice' => $data,
         ];
         $message = json_encode($payload);
+
+        $visible_student = isset($data['visible_student']) && in_array(strtolower($data['visible_student']), ['yes', 'y'], true);
+        $visible_staff   = isset($data['visible_staff']) && in_array(strtolower($data['visible_staff']), ['yes', 'y'], true);
+        $visible_parent  = isset($data['visible_parent']) && in_array(strtolower($data['visible_parent']), ['yes', 'y'], true);
+        $class_id        = isset($data['class_id']) && $data['class_id'] !== '' && $data['class_id'] !== null ? (int) $data['class_id'] : null;
+        $section_id      = isset($data['section_id']) && $data['section_id'] !== '' && $data['section_id'] !== null ? (int) $data['section_id'] : null;
+
+        $allowed_student_ids = null;
+        if ($visible_student && $class_id !== null && $section_id !== null) {
+            $mysqli = $this->getDbConnection();
+            if ($mysqli) {
+                $res = $mysqli->query("SELECT session_id FROM student_session ORDER BY session_id DESC LIMIT 1");
+                if ($res && $row = $res->fetch_assoc() && !empty($row['session_id'])) {
+                    $session_id = $mysqli->real_escape_string($row['session_id']);
+                    $class_id   = (int) $class_id;
+                    $section_id = (int) $section_id;
+                    $res2 = $mysqli->query("SELECT student_id FROM student_session WHERE session_id = '" . $session_id . "' AND class_id = " . $class_id . " AND section_id = " . $section_id);
+                    $allowed_student_ids = [];
+                    if ($res2) {
+                        while ($r = $res2->fetch_assoc()) {
+                            $allowed_student_ids[(string) $r['student_id']] = true;
+                        }
+                    }
+                }
+                $mysqli->close();
+            }
+        }
+
         $count = 0;
         foreach ($this->clients as $client) {
-            try {
-                $client->send($message);
-                $count++;
-            } catch (\Exception $e) {
-                echo "Broadcast new_notice to client failed: " . $e->getMessage() . "\n";
+            $user_id   = isset($client->user_id) ? $client->user_id : null;
+            $user_type = isset($client->user_type) ? $client->user_type : null;
+
+            if ($user_id === null || $user_type === null) {
+                continue;
+            }
+
+            $send = false;
+            if ($user_type === 'staff' && $visible_staff) {
+                $send = true;
+            } elseif ($user_type === 'student' && $visible_student) {
+                if ($allowed_student_ids === null) {
+                    $send = true;
+                } elseif (isset($allowed_student_ids[(string) $user_id])) {
+                    $send = true;
+                }
+            } elseif ($user_type === 'parent' && $visible_parent) {
+                $send = true;
+            }
+
+            if ($send) {
+                try {
+                    $client->send($message);
+                    $count++;
+                } catch (\Exception $e) {
+                    echo "Broadcast new_notice to client failed: " . $e->getMessage() . "\n";
+                }
             }
         }
         echo "Broadcast new_notice to {$count} client(s)\n";

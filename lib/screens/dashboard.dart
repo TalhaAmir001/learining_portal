@@ -9,6 +9,7 @@ import 'package:learining_portal/utils/widgets/dashboard_app_bar.dart';
 import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/utils/widgets/notice_board_box.dart';
+import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:provider/provider.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -213,8 +214,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Welcome Section
-                              _buildWelcomeSection(context, authProvider),
+                              WelcomeSection(authProvider: authProvider),
                               const SizedBox(height: 24),
 
                               // Notice Board
@@ -317,103 +317,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildWelcomeSection(BuildContext context, AuthProvider authProvider) {
-    final timeOfDay = DateTime.now().hour;
-    String greeting;
-
-    if (timeOfDay < 12) {
-      greeting = 'Good Morning';
-    } else if (timeOfDay < 17) {
-      greeting = 'Good Afternoon';
-    } else {
-      greeting = 'Good Evening';
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.primaryBlue.withOpacity(0.8),
-            AppColors.secondaryPurple,
-          ],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  greeting,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.white.withOpacity(0.9),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  authProvider.userName ?? 'User',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    authProvider.userType
-                            ?.toString()
-                            .split('.')
-                            .last
-                            .toUpperCase() ??
-                        'USER',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.school_rounded,
-              color: Colors.white,
-              size: 40,
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/network/domain/auth_repository.dart';
+import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
 
 enum UserType { student, guardian, teacher, admin }
@@ -195,6 +196,23 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// Clears all SharedPreferences (used on logout for every user type).
+  /// Ensures no stale session/cache remains so new FCM token and session work correctly.
+  Future<void> _clearAllSharedPreferences() async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs != null) {
+        final keys = _prefs!.getKeys().toList();
+        for (final key in keys) {
+          await _prefs!.remove(key);
+        }
+        debugPrint('SharedPreferences cleared on logout');
+      }
+    } catch (e) {
+      debugPrint('Error clearing SharedPreferences on logout: $e');
+    }
+  }
+
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _isAuthenticated;
   String? get errorMessage => _errorMessage;
@@ -206,12 +224,14 @@ class AuthProvider with ChangeNotifier {
   String? get userEmail => _currentUser?.email;
   String? get userName => _currentUser?.fullName;
   UserType? get userType => _currentUser?.userType;
+
   /// Admission number for student/guardian (from additionalData).
   String? get userAdmissionNo {
     final v = _currentUser?.additionalData?['admission_no'];
     if (v == null) return null;
     return v is String ? v : v.toString();
   }
+
   bool get isWebSocketConnected => _isWebSocketConnected;
 
   // Convert UserType enum to string
@@ -744,20 +764,21 @@ class AuthProvider with ChangeNotifier {
     return false;
   }
 
-  // Sign out
+  // Sign out (all user types: student, guardian, teacher, admin)
   Future<void> logout() async {
     try {
       // Stop maintaining WebSocket connection (but don't force disconnect)
-      // The connection will naturally close when user logs out
       _shouldMaintainConnection = false;
       if (_wsClient != null) {
-        // Just stop auto-reconnect, let connection close naturally
         _wsClient = null;
       }
       _isWebSocketConnected = false;
 
-      // Clear user ID from SharedPreferences
-      await _clearUserIdFromSharedPreferences();
+      // Clear notification session and delete FCM token so a new token is generated on next login
+      await NotificationService().clearSessionOnLogout();
+
+      // Clear all SharedPreferences so no stale session/cache remains
+      await _clearAllSharedPreferences();
 
       // Clear authentication state
       _isAuthenticated = false;

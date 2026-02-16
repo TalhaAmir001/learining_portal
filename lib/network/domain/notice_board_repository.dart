@@ -8,15 +8,26 @@ import 'package:learining_portal/utils/api_client.dart';
 class NoticeBoardRepository {
   /// Fetch notices from send_notifications visible to the given user type.
   /// [userType] - 'student' | 'staff' | 'parent'
+  /// For userType 'student', pass [studentId] (and optionally [sessionId]) so the API
+  /// returns only notices for all students or for the student's class/section.
   /// Returns list of SendNotificationDataModel; empty on error.
   static Future<List<SendNotificationDataModel>> getSendNotifications({
     required String userType,
+    int? studentId,
+    String? sessionId,
   }) async {
     try {
+      final queryParams = <String, String>{'user_type': userType};
+      if (userType == 'student' && studentId != null && studentId > 0) {
+        queryParams['student_id'] = studentId.toString();
+        // if (sessionId != null && sessionId.isNotEmpty) {
+        //   queryParams['session_id'] = sessionId;
+        // }
+      }
       // Use GET so redirects (e.g. auth) do not lose the body; server accepts user_type from query
       final response = await ApiClient.get(
         endpoint: '/mobile_apis/get_send_notifications.php',
-        queryParameters: {'user_type': userType},
+        queryParameters: queryParams,
       );
       // Server returned non-JSON or empty body (e.g. redirect, wrong URL, or PHP error)
       if (response.containsKey('raw')) {

@@ -12,6 +12,7 @@ class NoticeBoardModel {
   final DateTime? createdAt;
   final bool isPinned;
   final int? days;
+  final bool isRead;
 
   NoticeBoardModel({
     required this.id,
@@ -24,6 +25,7 @@ class NoticeBoardModel {
     this.createdAt,
     this.isPinned = false,
     this.days,
+    this.isRead = true,
   });
 
   factory NoticeBoardModel.fromSendNotification(SendNotificationDataModel n) {
@@ -38,6 +40,7 @@ class NoticeBoardModel {
       createdAt: n.createdAt,
       isPinned: n.isPinned,
       days: n.days,
+      isRead: n.isRead,
     );
   }
 }

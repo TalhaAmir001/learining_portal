@@ -67,6 +67,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       message.data['notification_type'] == 'notice' ||
       message.data['notice_id'] != null;
 
+  // For notices: only show our notification when the message is data-only (no
+  // FCM "notification" block). Otherwise the OS shows one from the notification
+  // block and we would show a second, causing two notifications when app is closed.
+  final isDataOnlyNotice = isNotice && message.notification == null;
+
   final String title;
   final String body;
   final String? payload;
@@ -91,7 +96,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     payload = chatId;
   }
 
-  if (chatId != null || message.notification != null || isNotice) {
+  if (chatId != null || message.notification != null && !isNotice || isDataOnlyNotice) {
     final id = (payload?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
     await localNotifications.show(
       id: id,
@@ -743,6 +748,20 @@ class NotificationService {
     _chatSubscriptions.clear();
     _currentUserId = null;
     debugPrint('Stopped listening for messages');
+  }
+
+  /// Call on logout (all user types). Clears session and deletes FCM token
+  /// so a new token is generated on next login.
+  Future<void> clearSessionOnLogout() async {
+    stopListeningForMessages();
+    try {
+      await _firebaseMessaging.deleteToken();
+      debugPrint(
+        'FCM token deleted on logout; new token will be generated on next login',
+      );
+    } catch (e) {
+      debugPrint('Error deleting FCM token on logout: $e');
+    }
   }
 
   // Send FCM notification to recipient (works on Spark plan - no Cloud Functions needed)
