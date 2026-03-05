@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../auth_provider.dart';
+import '../../models/user_model.dart';
 import '../../services/notification_service.dart';
 import '../../network/domain/messages_chat_repository.dart';
 
@@ -86,14 +87,9 @@ class NotificationProvider with ChangeNotifier {
     final userId = authProvider.currentUserId;
     if (userId == null) return;
 
-    String? userType;
-    if (authProvider.userType != null) {
-      final type = authProvider.userType!;
-      userType = (type == UserType.teacher || type == UserType.admin)
-          ? 'staff'
-          : 'student';
-    }
-    final typeForApi = userType ?? 'staff';
+    final typeForApi = authProvider.userType != null
+        ? UserModel.userTypeToApiString(authProvider.userType!)
+        : 'student';
 
     Future<bool> trySaveToDatabase() async {
       try {
@@ -109,7 +105,7 @@ class NotificationProvider with ChangeNotifier {
         await _notificationService.saveFCMTokenToUser(
           userId,
           token,
-          userType: userType,
+          userType: typeForApi,
         );
         // Save to MySQL (so WebSocket server can send FCM when app is closed)
         final result = await MessagesChatRepository.saveFCMToken(

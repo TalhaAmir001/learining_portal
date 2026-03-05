@@ -123,7 +123,7 @@ class NoticeBoardBox extends StatelessWidget {
 
             // Notices List
             ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 280, minHeight: 120),
+              constraints: const BoxConstraints(maxHeight: 320, minHeight: 120),
               child: isLoading
                   ? Center(
                       child: Column(
@@ -150,13 +150,13 @@ class NoticeBoardBox extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.inbox_outlined,
+                            Icons.mark_email_read_outlined,
                             size: 48,
                             color: AppColors.textSecondary.withOpacity(0.3),
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'No notices at the moment',
+                            'No notices',
                             style: theme.textTheme.bodyMedium?.copyWith(
                               color: AppColors.textSecondary,
                             ),
@@ -180,12 +180,13 @@ class NoticeBoardBox extends StatelessWidget {
                           const Divider(height: 1, indent: 56),
                       itemBuilder: (context, index) {
                         final notice = notices[index];
-                        return _buildNoticeItem(context, notice);
+                        final isVeryRecent = _isLessThan24HoursOld(notice);
+                        return _buildNoticeItem(context, notice, isVeryRecent);
                       },
                     ),
             ),
 
-            // Footer for more notices indicator (tappable to open full list)
+            // Footer for more notices indicator
             if (notices.length > 5)
               Material(
                 color: Colors.transparent,
@@ -229,7 +230,11 @@ class NoticeBoardBox extends StatelessWidget {
     );
   }
 
-  Widget _buildNoticeItem(BuildContext context, NoticeBoardModel notice) {
+  Widget _buildNoticeItem(
+    BuildContext context,
+    NoticeBoardModel notice,
+    bool isVeryRecent,
+  ) {
     final theme = Theme.of(context);
     final hasAttachments = notice.attachment?.isNotEmpty ?? false;
 
@@ -244,7 +249,9 @@ class NoticeBoardBox extends StatelessWidget {
             ),
           ).then((_) {
             if (context.mounted) {
-              context.read<SendNotificationsProvider>().loadNotices();
+              final provider = context.read<SendNotificationsProvider>();
+              provider.loadNotices();
+              provider.loadUnreadNotices();
             }
           });
         },
@@ -254,41 +261,82 @@ class NoticeBoardBox extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Date indicator
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppColors.primaryBlue.withOpacity(0.1),
-                      AppColors.secondaryPurple.withOpacity(0.1),
-                    ],
+              // Date indicator with subtle new indicator
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppColors.primaryBlue.withOpacity(0.1),
+                          AppColors.secondaryPurple.withOpacity(0.1),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isVeryRecent
+                            ? Colors.red.withOpacity(0.5)
+                            : AppColors.accentTeal.withOpacity(0.5),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _getDay(notice.publishDate ?? notice.date),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: isVeryRecent
+                                ? Colors.red.withOpacity(0.8)
+                                : AppColors.accentTeal,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Text(
+                          _getMonth(notice.publishDate ?? notice.date),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isVeryRecent
+                                ? Colors.red.withOpacity(0.6)
+                                : AppColors.accentTeal.withOpacity(0.8),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      _getDay(notice.publishDate ?? notice.date),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primaryBlue,
-                        fontSize: 12,
+
+                  // Minimalist new indicator - just a small dot
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        // color: isVeryRecent ? Colors.red : AppColors.accentTeal,
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                (isVeryRecent
+                                        ? Colors.red
+                                        : AppColors.accentTeal)
+                                    .withOpacity(0.3),
+                            blurRadius: 4,
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      _getMonth(notice.publishDate ?? notice.date),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppColors.secondaryPurple,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
               const SizedBox(width: 12),
 
@@ -300,18 +348,6 @@ class NoticeBoardBox extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (!notice.isRead) ...[
-                          Container(
-                            margin: const EdgeInsets.only(top: 5),
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
                         if (notice.isPinned) ...[
                           Icon(
                             Icons.push_pin_rounded,
@@ -333,6 +369,7 @@ class NoticeBoardBox extends StatelessWidget {
                         ),
                       ],
                     ),
+
                     if (notice.message != null) ...[
                       () {
                         final preview = htmlToPlainTextForPreview(
@@ -352,61 +389,47 @@ class NoticeBoardBox extends StatelessWidget {
                         );
                       }(),
                     ],
+
                     const SizedBox(height: 4),
+
+                    // Date and attachments row
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.calendar_today,
+                          Icons.access_time,
                           size: 12,
-                          color: AppColors.textSecondary.withOpacity(0.6),
+                          color: isVeryRecent
+                              ? Colors.red.withOpacity(0.6)
+                              : AppColors.textSecondary.withOpacity(0.6),
                         ),
                         const SizedBox(width: 4),
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 2,
-                            children: [
-                              if (notice.publishDate != null)
-                                Text(
-                                  'Publish: ${_formatDateShort(notice.publishDate)}',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(
-                                      0.8,
-                                    ),
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              if (notice.date != null)
-                                Text(
-                                  'Notice: ${_formatDateShort(notice.date)}',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(
-                                      0.8,
-                                    ),
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              if (notice.publishDate == null &&
-                                  notice.date == null)
-                                Text(
-                                  '—',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textSecondary.withOpacity(
-                                      0.7,
-                                    ),
-                                    fontSize: 10,
-                                  ),
-                                ),
-                            ],
+                        Text(
+                          _formatRelativeTime(
+                            notice.publishDate ?? notice.date,
+                          ),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isVeryRecent
+                                ? Colors.red.withOpacity(0.8)
+                                : AppColors.textSecondary.withOpacity(0.8),
+                            fontSize: 10,
+                            fontWeight: isVeryRecent ? FontWeight.w600 : null,
                           ),
                         ),
                         if (hasAttachments) ...[
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 12),
                           Icon(
                             Icons.attach_file,
                             size: 12,
                             color: AppColors.accentTeal,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${notice.attachment?.length}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.accentTeal,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ],
                       ],
@@ -415,17 +438,21 @@ class NoticeBoardBox extends StatelessWidget {
                 ),
               ),
 
-              // Arrow indicator
+              // Arrow indicator with subtle color
               Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: AppColors.accentTeal.withOpacity(0.1),
+                  color: isVeryRecent
+                      ? Colors.red.withOpacity(0.1)
+                      : AppColors.accentTeal.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   Icons.arrow_forward_ios,
                   size: 12,
-                  color: AppColors.accentTeal,
+                  color: isVeryRecent
+                      ? Colors.red.withOpacity(0.7)
+                      : AppColors.accentTeal,
                 ),
               ),
             ],
@@ -433,6 +460,33 @@ class NoticeBoardBox extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  bool _isLessThan24HoursOld(NoticeBoardModel notice) {
+    final publishDate = notice.publishDate ?? notice.date;
+    if (publishDate == null) return false;
+
+    final difference = DateTime.now().difference(publishDate);
+    return difference.inHours < 24;
+  }
+
+  String _formatRelativeTime(DateTime? date) {
+    if (date == null) return '';
+
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inDays > 7) {
+      return _formatDateShort(date);
+    } else if (difference.inDays > 0) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m ago';
+    } else {
+      return 'Just now';
+    }
   }
 
   String _getDay(DateTime? date) {

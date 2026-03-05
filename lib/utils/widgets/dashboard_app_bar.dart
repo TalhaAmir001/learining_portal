@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/screens/profile/profile_details.dart';
+import 'package:learining_portal/screens/profile/settings.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:provider/provider.dart';
 
@@ -419,7 +421,12 @@ class DashboardAppBar extends StatelessWidget {
               color: AppColors.primaryBlue,
               onTap: () {
                 Navigator.pop(context);
-                // Navigate to profile
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ProfileDetailsScreen(),
+                  ),
+                );
               },
             ),
             _buildMenuItem(
@@ -428,7 +435,12 @@ class DashboardAppBar extends StatelessWidget {
               color: AppColors.secondaryPurple,
               onTap: () {
                 Navigator.pop(context);
-                // Navigate to settings
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SettingsScreen(),
+                  ),
+                );
               },
             ),
             _buildMenuItem(

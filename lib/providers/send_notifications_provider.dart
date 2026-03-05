@@ -8,20 +8,27 @@ class SendNotificationsProvider with ChangeNotifier {
   AuthProvider? _authProvider;
 
   List<NoticeBoardModel> _notices = [];
+  List<NoticeBoardModel> _unreadNotices = [];
   bool _isLoading = false;
+  bool _isLoadingUnread = false;
   String? _errorMessage;
 
   List<NoticeBoardModel> get notices => _notices;
+  List<NoticeBoardModel> get unreadNotices => _unreadNotices;
   bool get isLoading => _isLoading;
+  bool get isLoadingUnread => _isLoadingUnread;
   String? get errorMessage => _errorMessage;
 
   void setAuthProvider(AuthProvider authProvider) {
     _authProvider = authProvider;
     if (_authProvider != null && _authProvider!.isAuthenticated) {
       loadNotices();
+      loadUnreadNotices();
     } else {
       _notices = [];
+      _unreadNotices = [];
       _isLoading = false;
+      _isLoadingUnread = false;
       _errorMessage = 'Not authenticated';
       notifyListeners();
     }
@@ -79,6 +86,54 @@ class SendNotificationsProvider with ChangeNotifier {
       });
     _isLoading = false;
     _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Load only unread notices (for dashboard notice box). Uses get_unread_notifications API.
+  Future<void> loadUnreadNotices() async {
+    final userType = _authProvider?.userType;
+    if (userType == null) {
+      _unreadNotices = [];
+      _isLoadingUnread = false;
+      notifyListeners();
+      return;
+    }
+
+    _isLoadingUnread = true;
+    notifyListeners();
+
+    final apiUserType = userTypeToApiString(userType);
+    int? studentId;
+    String? sessionId;
+    int? userId;
+    if (userType == UserType.student) {
+      final uid = _authProvider?.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        studentId = int.tryParse(uid);
+      }
+      final s = _authProvider?.currentUser?.additionalData?['session_id'];
+      sessionId = s?.toString();
+    } else {
+      final uid = _authProvider?.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        userId = int.tryParse(uid);
+      }
+    }
+
+    final list = await NoticeBoardRepository.getUnreadNotifications(
+      userType: apiUserType,
+      studentId: studentId,
+      sessionId: sessionId,
+      userId: userId,
+    );
+
+    _unreadNotices = list.map(NoticeBoardModel.fromSendNotification).toList()
+      ..sort((a, b) {
+        final da = a.publishDate ?? a.date ?? a.createdAt ?? DateTime(0);
+        final db = b.publishDate ?? b.date ?? b.createdAt ?? DateTime(0);
+        return db.compareTo(da);
+      });
+    _isLoadingUnread = false;
     notifyListeners();
   }
 

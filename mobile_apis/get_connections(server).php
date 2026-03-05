@@ -101,37 +101,47 @@ function getDbConnection()
     return $mysqli;
 }
 
+/** Column name in fl_chat_users for this user_type: staff_id (admin/Support), student_id, teacher_id, parent_id. */
+function getIdColumnForUserType($user_type) {
+    $t = strtolower(trim($user_type));
+    if (in_array($t, ['staff', 'admin'], true)) return 'staff_id';
+    if ($t === 'teacher') return 'teacher_id';
+    if (in_array($t, ['guardian', 'parent'], true)) return 'parent_id';
+    return 'student_id';
+}
+
 /**
- * Get chat_user_id from staff_id or student_id
+ * Get chat_user_id by the ID column for this user_type. Fallback: teacher in staff_id, guardian in student_id.
  */
 function getChatUserId($user_id, $user_type = 'staff')
 {
     $mysqli = getDbConnection();
-    if (!$mysqli) {
-        error_log("getChatUserId: Failed to get database connection");
-        return null;
-    }
-
+    if (!$mysqli) return null;
     $user_id = $mysqli->real_escape_string($user_id);
-    $user_type = $mysqli->real_escape_string($user_type);
-
-    if ($user_type == 'staff') {
-        $sql = "SELECT id FROM fl_chat_users WHERE staff_id = '$user_id' AND user_type = 'staff' LIMIT 1";
-    } else {
-        $sql = "SELECT id FROM fl_chat_users WHERE student_id = '$user_id' AND user_type = 'student' LIMIT 1";
-    }
-
+    $user_type = strtolower(trim($mysqli->real_escape_string($user_type)));
+    $col = getIdColumnForUserType($user_type);
+    $sql = "SELECT id FROM fl_chat_users WHERE $col = '$user_id' LIMIT 1";
     $result = $mysqli->query($sql);
     if ($result && $row = $result->fetch_assoc()) {
-        $chat_user_id = intval($row['id']);
         $mysqli->close();
-        return $chat_user_id;
+        return intval($row['id']);
     }
-    
-    if ($mysqli->error) {
-        error_log("getChatUserId SQL error: " . $mysqli->error);
+    if ($user_type === 'teacher') {
+        $sql = "SELECT id FROM fl_chat_users WHERE staff_id = '$user_id' AND user_type = 'teacher' LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $mysqli->close();
+            return intval($row['id']);
+        }
     }
-
+    if (in_array($user_type, ['guardian', 'parent'], true)) {
+        $sql = "SELECT id FROM fl_chat_users WHERE student_id = '$user_id' AND user_type IN ('guardian', 'parent') LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $mysqli->close();
+            return intval($row['id']);
+        }
+    }
     $mysqli->close();
     return null;
 }
@@ -159,9 +169,13 @@ function getUserConnections($chat_user_id)
                 cc.support_claimed_by_staff_id,
                 cu1.staff_id as user_one_staff_id,
                 cu1.student_id as user_one_student_id,
+                cu1.teacher_id as user_one_teacher_id,
+                cu1.parent_id as user_one_parent_id,
                 cu1.user_type as user_one_type,
                 cu2.staff_id as user_two_staff_id,
                 cu2.student_id as user_two_student_id,
+                cu2.teacher_id as user_two_teacher_id,
+                cu2.parent_id as user_two_parent_id,
                 cu2.user_type as user_two_type,
                 m.id as last_message_id,
                 m.message as last_message,
@@ -195,18 +209,18 @@ function getUserConnections($chat_user_id)
                 ? $row['chat_user_two'] 
                 : $row['chat_user_one'];
             
-            // Get the other user's actual user_id (staff_id or student_id)
+            // Get the other user's actual user_id (first non-null of staff_id, student_id, teacher_id, parent_id)
             $other_user_id = null;
             $other_user_type = null;
-            
             if ($row['chat_user_one'] == $chat_user_id) {
-                // Other user is user_two
-                $other_user_id = $row['user_two_staff_id'] ?: $row['user_two_student_id'];
+                $other_user_id = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
                 $other_user_type = $row['user_two_type'];
             } else {
-                // Other user is user_one
-                $other_user_id = $row['user_one_staff_id'] ?: $row['user_one_student_id'];
+                $other_user_id = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
                 $other_user_type = $row['user_one_type'];
+            }
+            if ($other_user_id !== null) {
+                $other_user_id = (string) $other_user_id;
             }
 
             // Determine sender of last message
@@ -219,12 +233,14 @@ function getUserConnections($chat_user_id)
                     ? $row['chat_user_two'] 
                     : $row['chat_user_one'];
                 
-                // Get sender's actual user_id
                 $sender_id = null;
                 if ($sender_chat_user_id == $row['chat_user_one']) {
-                    $sender_id = $row['user_one_staff_id'] ?: $row['user_one_student_id'];
+                    $sender_id = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
                 } else {
-                    $sender_id = $row['user_two_staff_id'] ?: $row['user_two_student_id'];
+                    $sender_id = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
+                }
+                if ($sender_id !== null) {
+                    $sender_id = (string) $sender_id;
                 }
 
                 $last_message = [
@@ -239,14 +255,16 @@ function getUserConnections($chat_user_id)
                 ];
             }
 
+            $u1 = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
+            $u2 = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
             $connections[] = [
                 'id' => $row['id'],
                 'chat_user_one' => $row['chat_user_one'],
                 'chat_user_two' => $row['chat_user_two'],
                 'chat_user_one_id' => $row['chat_user_one'],
                 'chat_user_two_id' => $row['chat_user_two'],
-                'user_one_id' => $row['user_one_staff_id'] ?: $row['user_one_student_id'],
-                'user_two_id' => $row['user_two_staff_id'] ?: $row['user_two_student_id'],
+                'user_one_id' => $u1 !== null ? (string) $u1 : null,
+                'user_two_id' => $u2 !== null ? (string) $u2 : null,
                 'other_user_id' => $other_user_id,
                 'other_user_type' => $other_user_type,
                 'created_at' => $row['created_at'],
@@ -289,14 +307,14 @@ try {
         exit;
     }
 
-    // Validate user_type
+    // Validate user_type (UserType enum: student, guardian, teacher, admin; or 'staff' for Support)
     $user_type = strtolower($user_type);
-    if (!in_array($user_type, ['staff', 'student'])) {
+    if (!in_array($user_type, ['student', 'guardian', 'teacher', 'admin', 'staff'])) {
         http_response_code(400);
         echo json_encode([
             'action' => 'error',
             'status' => 'error',
-            'message' => 'Invalid user_type. Must be "staff" or "student"'
+            'message' => 'Invalid user_type. Must be one of: student, guardian, teacher, admin, staff'
         ]);
         exit;
     }

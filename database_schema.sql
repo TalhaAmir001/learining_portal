@@ -13,18 +13,24 @@
 -- =====================================================
 CREATE TABLE IF NOT EXISTS `fl_chat_users` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
-  `staff_id` INT(11) NULL DEFAULT NULL COMMENT 'Reference to staff table',
-  `student_id` INT(11) NULL DEFAULT NULL COMMENT 'Reference to student table',
-  `user_type` ENUM('staff', 'student') NOT NULL DEFAULT 'staff' COMMENT 'Type of user',
+  `staff_id` INT(11) NULL DEFAULT NULL COMMENT 'Admins + Support (0). One of staff_id/student_id/teacher_id/parent_id per row.',
+  `student_id` INT(11) NULL DEFAULT NULL COMMENT 'Students only.',
+  `teacher_id` INT(11) NULL DEFAULT NULL COMMENT 'Teachers only. Communications: Admins–Student, Admins–Teachers, Admins–Parents.',
+  `parent_id` INT(11) NULL DEFAULT NULL COMMENT 'Parents/guardians only.',
+  `user_type` VARCHAR(20) NOT NULL DEFAULT 'student' COMMENT 'student, guardian, teacher, admin, or staff (Support).',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_staff_id` (`staff_id`),
   INDEX `idx_student_id` (`student_id`),
+  INDEX `idx_teacher_id` (`teacher_id`),
+  INDEX `idx_parent_id` (`parent_id`),
   INDEX `idx_user_type` (`user_type`),
   UNIQUE KEY `unique_staff_user` (`staff_id`, `user_type`),
-  UNIQUE KEY `unique_student_user` (`student_id`, `user_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Chat users table linking staff/students to chat system';
+  UNIQUE KEY `unique_student_user` (`student_id`, `user_type`),
+  UNIQUE KEY `unique_teacher_user` (`teacher_id`, `user_type`),
+  UNIQUE KEY `unique_parent_user` (`parent_id`, `user_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Chat users: staff_id=admins+Support, student_id, teacher_id, parent_id';
 
 -- =====================================================
 -- Table: chat_connections

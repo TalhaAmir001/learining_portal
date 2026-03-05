@@ -372,7 +372,9 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
     final uri = Uri.tryParse(urlOrPath);
     if (uri == null) return;
     if (!uri.hasScheme) {
-      final withScheme = Uri.parse('https://$urlOrPath');
+      final withScheme = Uri.parse(
+        'https://portal.gcsewithrosi.co.uk/uploads/notice_board_images/$urlOrPath',
+      );
       if (await canLaunchUrl(withScheme)) {
         await launchUrl(withScheme, mode: LaunchMode.externalApplication);
       }

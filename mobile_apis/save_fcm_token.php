@@ -33,12 +33,13 @@ if (empty($user_id) || empty($fcm_token)) {
     exit;
 }
 
-// Validate user_type
-if ($user_type !== 'staff' && $user_type !== 'student') {
+// Validate user_type (UserType enum: student, guardian, teacher, admin; or staff for Support)
+$user_type = strtolower(trim($user_type ?? ''));
+if (!in_array($user_type, ['student', 'guardian', 'teacher', 'admin', 'staff'])) {
     header('Content-Type: application/json');
     echo json_encode([
         'success' => false,
-        'error' => 'Invalid user_type. Must be "staff" or "student"'
+        'error' => 'Invalid user_type. Must be one of: student, guardian, teacher, admin, staff'
     ]);
     exit;
 }
@@ -61,12 +62,8 @@ try {
     $user_type = $mysqli->real_escape_string($user_type);
     $fcm_token = $mysqli->real_escape_string($fcm_token);
 
-    // Find the chat_user_id for this user
-    if ($user_type == 'staff') {
-        $find_sql = "SELECT id FROM fl_chat_users WHERE staff_id = '$user_id' AND user_type = 'staff' LIMIT 1";
-    } else {
-        $find_sql = "SELECT id FROM fl_chat_users WHERE student_id = '$user_id' AND user_type = 'student' LIMIT 1";
-    }
+    $col = (in_array($user_type, ['staff', 'admin'])) ? 'staff_id' : (($user_type === 'teacher') ? 'teacher_id' : (in_array($user_type, ['guardian', 'parent']) ? 'parent_id' : 'student_id'));
+    $find_sql = "SELECT id FROM fl_chat_users WHERE $col = '$user_id' LIMIT 1";
 
     $result = $mysqli->query($find_sql);
     
@@ -75,11 +72,11 @@ try {
     }
 
     if ($result->num_rows > 0) {
-        // User exists, update FCM token
+        // User exists, update FCM token and user_type (so Support inbox FCM finds admin/staff rows)
         $row = $result->fetch_assoc();
         $chat_user_id = $row['id'];
         
-        $update_sql = "UPDATE fl_chat_users SET fcm_token = '$fcm_token', updated_at = NOW() WHERE id = $chat_user_id";
+        $update_sql = "UPDATE fl_chat_users SET fcm_token = '$fcm_token', user_type = '$user_type', updated_at = NOW() WHERE id = $chat_user_id";
         
         if ($mysqli->query($update_sql)) {
             $mysqli->close();

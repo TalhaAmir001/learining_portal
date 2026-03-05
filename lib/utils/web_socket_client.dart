@@ -47,6 +47,10 @@ class WebSocketClient {
   Function(Map<String, dynamic>)? onNewMessage;
   Function(Map<String, dynamic>)? onMessageSent;
   Function(Map<String, dynamic>)? onMessagesReceived;
+  Function(Map<String, dynamic>)? onMessagesMarkedRead;
+
+  /// Called when the other party reads the messages we sent; use to update read-ticks in real time.
+  Function(Map<String, dynamic>)? onMessagesRead;
 
   /// Called when server broadcasts a new notice (notice board); payload has 'notice' map.
   Function(Map<String, dynamic>)? onNewNotice;
@@ -224,6 +228,14 @@ class WebSocketClient {
           _handleMessages(data);
           break;
 
+        case 'messages_marked_read':
+          _handleMessagesMarkedRead(data);
+          break;
+
+        case 'messages_read':
+          onMessagesRead?.call(data);
+          break;
+
         case 'new_notice':
           _handleNewNotice(data);
           break;
@@ -276,6 +288,11 @@ class WebSocketClient {
   void _handleMessages(Map<String, dynamic> data) {
     debugPrint('WebSocketClient: Messages received');
     onMessagesReceived?.call(data);
+  }
+
+  /// Handle server confirmation that messages were marked as read
+  void _handleMessagesMarkedRead(Map<String, dynamic> data) {
+    onMessagesMarkedRead?.call(data);
   }
 
   /// Handle new notice broadcast (notice board)

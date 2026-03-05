@@ -50,19 +50,27 @@ class InboxProvider with ChangeNotifier {
     super.dispose();
   }
 
-  // Get user type for API ('staff' or 'student')
   String _getUserTypeForApi() {
-    if (_authProvider?.userType != null) {
-      final userType = _authProvider!.userType!;
-      // Map app UserType to API user_type
-      // staff = teacher/admin, student = student/guardian
-      if (userType == UserType.teacher || userType == UserType.admin) {
-        return 'staff';
-      } else {
-        return 'student';
-      }
+    if (_authProvider?.userType == null) return 'student';
+    if (_authProvider!.userType == UserType.admin) return 'staff';
+    return UserModel.userTypeToApiString(_authProvider!.userType!);
+  }
+
+  /// Map API other_user_type (student, teacher, guardian, staff) to UserType for chat.
+  static UserType _userTypeFromApiString(String? type) {
+    if (type == null) return UserType.student;
+    switch (type.toLowerCase()) {
+      case 'teacher':
+      case 'staff':
+        return UserType.teacher;
+      case 'guardian':
+      case 'parent':
+        return UserType.guardian;
+      case 'student':
+        return UserType.student;
+      default:
+        return UserType.student;
     }
-    return 'staff';
   }
 
   // Get API user ID (staff_id or student_id) from AuthProvider
@@ -165,20 +173,15 @@ class InboxProvider with ChangeNotifier {
               otherUser = UserModel(
                 uid: otherUserId,
                 email: '',
-                userType: otherUserType == 'staff'
-                    ? UserType.teacher
-                    : UserType.student,
+                userType: InboxProvider._userTypeFromApiString(otherUserType),
               );
             }
           } catch (e) {
             debugPrint('InboxProvider: Error fetching user data: $e');
-            // Create a minimal user model on error
             otherUser = UserModel(
               uid: otherUserId,
               email: '',
-              userType: otherUserType == 'staff'
-                  ? UserType.teacher
-                  : UserType.student,
+              userType: InboxProvider._userTypeFromApiString(otherUserType),
             );
           }
 

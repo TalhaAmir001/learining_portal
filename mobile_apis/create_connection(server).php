@@ -85,76 +85,72 @@ function getDbConnection()
     return $mysqli;
 }
 
-/**
- * Get chat_user_id from staff_id or student_id
- */
+function getIdColumnForUserType($user_type) {
+    $t = strtolower(trim($user_type));
+    if (in_array($t, ['staff', 'admin'], true)) return 'staff_id';
+    if ($t === 'teacher') return 'teacher_id';
+    if (in_array($t, ['guardian', 'parent'], true)) return 'parent_id';
+    return 'student_id';
+}
+
 function getChatUserId($user_id, $user_type = 'staff')
 {
     $mysqli = getDbConnection();
-    if (!$mysqli) {
-        error_log("getChatUserId: Failed to get database connection");
-        return null;
-    }
-
+    if (!$mysqli) return null;
     $user_id = $mysqli->real_escape_string($user_id);
-    $user_type = $mysqli->real_escape_string($user_type);
-
-    if ($user_type == 'staff') {
-        $sql = "SELECT id FROM fl_chat_users WHERE staff_id = '$user_id' AND user_type = 'staff' LIMIT 1";
-    } else {
-        $sql = "SELECT id FROM fl_chat_users WHERE student_id = '$user_id' AND user_type = 'student' LIMIT 1";
-    }
-
+    $user_type = strtolower(trim($mysqli->real_escape_string($user_type)));
+    $col = getIdColumnForUserType($user_type);
+    $sql = "SELECT id FROM fl_chat_users WHERE $col = '$user_id' LIMIT 1";
     $result = $mysqli->query($sql);
     if ($result && $row = $result->fetch_assoc()) {
-        $chat_user_id = intval($row['id']);
         $mysqli->close();
-        return $chat_user_id;
+        return intval($row['id']);
     }
-    
-    if ($mysqli->error) {
-        error_log("getChatUserId SQL error: " . $mysqli->error);
+    if ($user_type === 'teacher') {
+        $sql = "SELECT id FROM fl_chat_users WHERE staff_id = '$user_id' AND user_type = 'teacher' LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $mysqli->close();
+            return intval($row['id']);
+        }
     }
-
+    if (in_array($user_type, ['guardian', 'parent'], true)) {
+        $sql = "SELECT id FROM fl_chat_users WHERE student_id = '$user_id' AND user_type IN ('guardian', 'parent') LIMIT 1";
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $mysqli->close();
+            return intval($row['id']);
+        }
+    }
     $mysqli->close();
     return null;
 }
 
-/**
- * Create a new chat user entry in fl_chat_users table
- */
+/** Create or update chat user. Uses staff_id, student_id, teacher_id, or parent_id per user_type. */
 function createChatUser($user_id, $user_type = 'staff')
 {
     $mysqli = getDbConnection();
-    if (!$mysqli) {
-        error_log("createChatUser: Failed to get database connection");
-        return null;
-    }
-
+    if (!$mysqli) return null;
     $user_id = $mysqli->real_escape_string($user_id);
-    $user_type = $mysqli->real_escape_string($user_type);
-
-    // Insert based on user type
-    if ($user_type == 'staff') {
-        $sql = "INSERT INTO fl_chat_users (staff_id, user_type, created_at, updated_at)
-                VALUES ('$user_id', 'staff', NOW(), NOW())
-                ON DUPLICATE KEY UPDATE updated_at = NOW()";
-    } else {
-        $sql = "INSERT INTO fl_chat_users (student_id, user_type, created_at, updated_at)
-                VALUES ('$user_id', 'student', NOW(), NOW())
-                ON DUPLICATE KEY UPDATE updated_at = NOW()";
-    }
-
-    if ($mysqli->query($sql)) {
-        // Get the chat_user_id (either newly inserted or existing)
-        $chat_user_id = getChatUserId($user_id, $user_type);
+    $user_type = strtolower(trim($mysqli->real_escape_string($user_type)));
+    $col = getIdColumnForUserType($user_type);
+    $mysqli->query("UPDATE fl_chat_users SET user_type = '$user_type', updated_at = NOW() WHERE $col = '$user_id'");
+    if ($mysqli->affected_rows > 0) {
+        $cid = getChatUserId($user_id, $user_type);
         $mysqli->close();
-        return $chat_user_id;
-    } else {
-        error_log("createChatUser SQL error: " . $mysqli->error);
-        error_log("SQL query: " . $sql);
+        return $cid;
     }
-
+    $staff = $col === 'staff_id' ? "'$user_id'" : 'NULL';
+    $student = $col === 'student_id' ? "'$user_id'" : 'NULL';
+    $teacher = $col === 'teacher_id' ? "'$user_id'" : 'NULL';
+    $parent = $col === 'parent_id' ? "'$user_id'" : 'NULL';
+    $sql = "INSERT INTO fl_chat_users (staff_id, student_id, teacher_id, parent_id, user_type, created_at, updated_at)
+            VALUES ($staff, $student, $teacher, $parent, '$user_type', NOW(), NOW())";
+    if ($mysqli->query($sql)) {
+        $cid = getChatUserId($user_id, $user_type);
+        $mysqli->close();
+        return $cid;
+    }
     $mysqli->close();
     return null;
 }
@@ -291,12 +287,13 @@ try {
     $user_one_type = strtolower($user_one_type);
     $user_two_type = strtolower($user_two_type);
     
-    if (!in_array($user_one_type, ['staff', 'student']) || !in_array($user_two_type, ['staff', 'student'])) {
+    $valid_types = ['student', 'guardian', 'teacher', 'admin', 'staff'];
+    if (!in_array($user_one_type, $valid_types) || !in_array($user_two_type, $valid_types)) {
         http_response_code(400);
         echo json_encode([
             'action' => 'error',
             'status' => 'error',
-            'message' => 'Invalid user_type. Must be "staff" or "student"'
+            'message' => 'Invalid user_type. Must be one of: student, guardian, teacher, admin, staff'
         ]);
         exit;
     }

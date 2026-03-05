@@ -8,9 +8,10 @@ import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/widgets/dashboard_app_bar.dart';
 import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
-import 'package:learining_portal/utils/widgets/notice_board_box.dart';
+import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -24,6 +25,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+
+  static const String _kPullToRefreshHintShownKey =
+      'dashboard_pull_to_refresh_hint_shown';
 
   @override
   void initState() {
@@ -55,8 +59,39 @@ class _DashboardScreenState extends State<DashboardScreen>
       sendNotifications.setAuthProvider(auth);
       auth.onNewNoticeReceived = (_) {
         sendNotifications.loadNotices();
+        sendNotifications.loadUnreadNotices();
       };
+      _maybeShowPullToRefreshHint();
     });
+  }
+
+  Future<void> _maybeShowPullToRefreshHint() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final shown = prefs.getBool(_kPullToRefreshHintShownKey) ?? false;
+      if (shown || !mounted) return;
+      await prefs.setBool(_kPullToRefreshHintShownKey, true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.refresh, color: Colors.white.withOpacity(0.9)),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Pull down to refresh notices',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.primaryBlue,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -201,15 +236,23 @@ class _DashboardScreenState extends State<DashboardScreen>
                       authProvider.userType,
                     );
 
-                    return SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isTablet ? size.width * 0.08 : 16.0,
-                        vertical: 24.0,
-                      ),
-                      child: FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: SlideTransition(
+                    return RefreshIndicator(
+                      onRefresh: () async {
+                        await sendNotifications.loadNotices();
+                        await sendNotifications.loadUnreadNotices();
+                      },
+                      color: AppColors.primaryBlue,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isTablet ? size.width * 0.08 : 16.0,
+                          vertical: 24.0,
+                        ),
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: SlideTransition(
                           position: _slideAnimation,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -217,10 +260,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                               WelcomeSection(authProvider: authProvider),
                               const SizedBox(height: 24),
 
-                              // Notice Board
+                              // Notice Board (unread only in box; View All shows full list)
                               NoticeBoardBox(
-                                notices: sendNotifications.notices,
-                                isLoading: sendNotifications.isLoading,
+                                notices: sendNotifications.unreadNotices,
+                                isLoading: sendNotifications.isLoadingUnread,
                                 onViewAll: () {
                                   Navigator.push(
                                     context,
@@ -310,6 +353,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           ),
                         ),
                       ),
+                    ),
                     );
                   },
                 ),

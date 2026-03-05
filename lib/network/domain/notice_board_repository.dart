@@ -86,6 +86,76 @@ class NoticeBoardRepository {
     }
   }
 
+  /// Fetch only unread notices for the given user (same visibility/date rules as getSendNotifications).
+  /// For student: pass [studentId] (and optionally [sessionId]). For staff/parent: pass [userId].
+  static Future<List<SendNotificationDataModel>> getUnreadNotifications({
+    required String userType,
+    int? studentId,
+    String? sessionId,
+    int? userId,
+  }) async {
+    try {
+      final queryParams = <String, String>{'user_type': userType};
+      if (userType == 'student' &&
+          studentId != null &&
+          studentId > 0) {
+        queryParams['student_id'] = studentId.toString();
+        if (sessionId != null && sessionId.isNotEmpty) {
+          queryParams['session_id'] = sessionId;
+        }
+      } else if ((userType == 'staff' || userType == 'parent') &&
+          userId != null &&
+          userId > 0) {
+        queryParams['user_id'] = userId.toString();
+      }
+      final response = await ApiClient.get(
+        endpoint: '/mobile_apis/get_unread_notifications.php',
+        queryParameters: queryParams,
+      );
+      if (response.containsKey('raw')) {
+        final raw = response['raw']?.toString() ?? '';
+        if (raw.isNotEmpty && raw.trim().isNotEmpty) {
+          try {
+            final decoded = json.decode(raw);
+            if (decoded is Map<String, dynamic> &&
+                decoded['success'] == true &&
+                decoded['notifications'] != null) {
+              final list = decoded['notifications'] as List<dynamic>;
+              return list
+                  .map(
+                    (e) => SendNotificationDataModel.fromJson(
+                      e as Map<String, dynamic>,
+                    ),
+                  )
+                  .toList();
+            }
+          } catch (_) {}
+        }
+        return [];
+      }
+      if (response['success'] == true && response['notifications'] != null) {
+        final list = response['notifications'] as List<dynamic>;
+        return list
+            .map(
+              (e) =>
+                  SendNotificationDataModel.fromJson(e as Map<String, dynamic>),
+            )
+            .toList();
+      }
+      return [];
+    } on ApiException catch (e) {
+      debugPrint(
+        'NoticeBoardRepository: getUnreadNotifications ApiException: ${e.message}',
+      );
+      return [];
+    } catch (e) {
+      debugPrint(
+        'NoticeBoardRepository: getUnreadNotifications error: $e',
+      );
+      return [];
+    }
+  }
+
   /// Record that the current user has viewed a notice (insert/update read_notifications).
   /// [notificationId] - id from send_notifications
   /// [userType] - 'student' | 'staff' | 'parent'

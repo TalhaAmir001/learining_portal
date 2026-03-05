@@ -165,7 +165,7 @@ class UserModel {
     } catch (e) {
       // If date parsing fails, use current time
       createdAt = DateTime.now();
-      updatedAt = DateTime.now();
+      updatedAt = DateTime.now();  //
     }
 
     // Build image URL if available
@@ -343,6 +343,11 @@ class UserModel {
       updatedAt: updatedAt ?? this.updatedAt,
       additionalData: additionalData ?? this.additionalData,
     );
+  }
+
+  /// Returns the API/backend string for this user type (student, guardian, teacher, admin).
+  static String userTypeToApiString(UserType userType) {
+    return _userTypeToString(userType);
   }
 
   // Helper methods for UserType conversion

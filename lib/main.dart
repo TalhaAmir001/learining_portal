@@ -11,6 +11,8 @@ import 'providers/auth_provider.dart';
 import 'providers/messages/inbox_provider.dart';
 import 'providers/messages/members_provider.dart';
 import 'providers/messages/notification_provider.dart';
+import 'providers/profile/profile_details_provider.dart';
+import 'providers/profile/settings_provider.dart';
 import 'providers/send_notifications_provider.dart';
 import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
@@ -200,7 +202,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => MembersProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
         ChangeNotifierProvider(create: (_) => NoticeBoardProvider()),
+        ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => SendNotificationsProvider()),
+        ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
@@ -262,7 +266,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         debugPrint('Main: New message received, refreshing inbox');
         // Refresh inbox to show new messages
         inboxProvider.refreshChats();
-        // Show local notification if user is not viewing this chat
+        // Do not show local notification for our own message (e.g. teacher sent to Support, other connection got echo)
+        final senderId = messageData['sender_id']?.toString();
+        final currentUser = authProvider.currentUser;
+        final myId = currentUser != null ? currentUser.uid : null;
+        if (senderId != null && myId != null && senderId == myId) {
+          return;
+        }
         notificationProvider.showNotificationForIncomingMessage(messageData);
       };
 

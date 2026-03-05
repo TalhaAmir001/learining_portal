@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:learining_portal/models/message_model.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/firebase_options.dart';
+import 'package:learining_portal/providers/profile/settings_provider.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/main.dart';
 import 'package:learining_portal/screens/messages/chat.dart';
@@ -16,6 +17,7 @@ import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:provider/provider.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Top-level function to handle background messages
 @pragma('vm:entry-point')
@@ -62,8 +64,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       >()
       ?.createNotificationChannel(androidChannel);
 
+  // Respect user preference: do not show notifications when disabled
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool('notifications_enabled') == false) {
+    return;
+  }
+
   final chatId = message.data['chatId'] ?? message.data['chat_id'];
-  final isNotice = message.data['type'] == 'notice' ||
+  final isNotice =
+      message.data['type'] == 'notice' ||
       message.data['notification_type'] == 'notice' ||
       message.data['notice_id'] != null;
 
@@ -78,12 +87,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   if (isNotice) {
     title = 'Notice';
-    body = (message.data['title'] ??
-            message.data['notice_title'] ??
-            message.notification?.title ??
-            message.notification?.body ??
-            'New notice')
-        .toString();
+    body =
+        (message.data['title'] ??
+                message.data['notice_title'] ??
+                message.notification?.title ??
+                message.notification?.body ??
+                'New notice')
+            .toString();
     payload = 'notice';
   } else {
     title =
@@ -96,7 +106,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     payload = chatId;
   }
 
-  if (chatId != null || message.notification != null && !isNotice || isDataOnlyNotice) {
+  if (chatId != null ||
+      message.notification != null && !isNotice ||
+      isDataOnlyNotice) {
     final id = (payload?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
     await localNotifications.show(
       id: id,
@@ -284,6 +296,7 @@ class NotificationService {
     String? userType,
   }) async {
     if (token == null || userId.isEmpty) return;
+    if (!await SettingsProvider.areNotificationsEnabled()) return;
 
     try {
       // Save to Firestore
@@ -324,25 +337,22 @@ class NotificationService {
     }
   }
 
-  // Save FCM token to MySQL database via API
+  // Save FCM token to MySQL database via API (try each UserType until one matches fl_chat_users row)
   Future<void> _saveFCMTokenToDatabase(String userId, String token) async {
-    // Try to determine user type - we'll try both and let the API handle it
-    // Or you can pass user type if available
-    for (final userType in ['staff', 'student']) {
+    const userTypes = ['student', 'guardian', 'teacher', 'admin'];
+    for (final userType in userTypes) {
       final result = await MessagesChatRepository.saveFCMToken(
         userId: userId,
         userType: userType,
         fcmToken: token,
       );
-
       if (result['success'] == true) {
         debugPrint(
           'FCM token saved to database for user: $userId (type: $userType)',
         );
-        return; // Success, exit
+        return;
       }
     }
-
     debugPrint('Failed to save FCM token to database for user: $userId');
   }
 
@@ -450,13 +460,24 @@ class NotificationService {
   }
 
   // Handle foreground messages (app open but may not be on chat screen)
-  void _handleForegroundMessage(RemoteMessage message) {
+  void _handleForegroundMessage(RemoteMessage message) async {
+    if (!await SettingsProvider.areNotificationsEnabled()) return;
     debugPrint('Received foreground message: ${message.messageId}');
 
     final chatId = message.data['chatId'] ?? message.data['chat_id'];
-    final isNotice = message.data['type'] == 'notice' ||
+    final isNotice =
+        message.data['type'] == 'notice' ||
         message.data['notification_type'] == 'notice' ||
         message.data['notice_id'] != null;
+
+    // Never show chat notification for our own message (e.g. teacher sent to Support)
+    if (!isNotice) {
+      final senderId = message.data['senderId']?.toString();
+      if (senderId != null && _currentUserId != null && senderId == _currentUserId) {
+        debugPrint('Skipping notification: sender is current user');
+        return;
+      }
+    }
 
     final String title;
     final String body;
@@ -464,12 +485,13 @@ class NotificationService {
 
     if (isNotice) {
       title = 'Notice';
-      body = (message.data['title'] ??
-              message.data['notice_title'] ??
-              message.notification?.title ??
-              message.notification?.body ??
-              'New notice')
-          .toString();
+      body =
+          (message.data['title'] ??
+                  message.data['notice_title'] ??
+                  message.notification?.title ??
+                  message.notification?.body ??
+                  'New notice')
+              .toString();
       payload = 'notice';
     } else {
       title =
@@ -511,7 +533,8 @@ class NotificationService {
   // Handle notification tap (when app is in background or terminated)
   void _handleNotificationTap(RemoteMessage message) {
     debugPrint('Notification tapped: ${message.messageId}');
-    final isNotice = message.data['type'] == 'notice' ||
+    final isNotice =
+        message.data['type'] == 'notice' ||
         message.data['notification_type'] == 'notice' ||
         message.data['notice_id'] != null;
     final context = navigatorKey.currentContext;
@@ -541,9 +564,7 @@ class NotificationService {
     try {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => const NoticeBoardScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const NoticeBoardScreen()),
       );
       debugPrint('Navigated to Notice Board');
     } catch (e) {
@@ -617,6 +638,7 @@ class NotificationService {
     String senderId,
     String messageText,
   ) async {
+    if (!await SettingsProvider.areNotificationsEnabled()) return;
     // Don't show if this chat is currently open
     if (_currentOpenChatId == chatConnectionId) {
       debugPrint(
@@ -685,6 +707,7 @@ class NotificationService {
     MessageModel message,
     String chatId,
   ) async {
+    if (!await SettingsProvider.areNotificationsEnabled()) return;
     // Don't show notification if this chat is currently open
     if (_currentOpenChatId == chatId) {
       debugPrint('Skipping notification for currently open chat: $chatId');

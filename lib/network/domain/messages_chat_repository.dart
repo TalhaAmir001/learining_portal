@@ -12,7 +12,7 @@ class MessagesChatRepository {
   /// Create a chat user entry in the database via HTTP API
   ///
   /// [userId] - The user ID (staff_id or student_id)
-  /// [userType] - The user type ('staff' or 'student')
+  /// [userType] - The user type (UserType enum: student, guardian, teacher, admin)
   ///
   /// Returns a Map containing:
   /// - 'success': bool indicating if the operation was successful
@@ -28,11 +28,11 @@ class MessagesChatRepository {
         'MessagesChatRepository: Creating chat user - userId: $userId, userType: $userType',
       );
 
-      // Validate userType
-      if (userType != 'staff' && userType != 'student') {
+      const validTypes = ['student', 'guardian', 'teacher', 'admin'];
+      if (!validTypes.contains(userType)) {
         return {
           'success': false,
-          'error': 'Invalid user_type. Must be "staff" or "student"',
+          'error': 'Invalid user_type. Must be one of: $validTypes',
         };
       }
 
@@ -91,9 +91,9 @@ class MessagesChatRepository {
   /// Create a chat connection between two users via HTTP API
   ///
   /// [userOneId] - The first user's ID (staff_id or student_id)
-  /// [userOneType] - The first user's type ('staff' or 'student')
+  /// [userOneType] - The first user's type (student, guardian, teacher, admin, or 'staff' for Support)
   /// [userTwoId] - The second user's ID (staff_id or student_id)
-  /// [userTwoType] - The second user's type ('staff' or 'student')
+  /// [userTwoType] - The second user's type (student, guardian, teacher, admin, or 'staff' for Support)
   ///
   /// Returns a Map containing:
   /// - 'success': bool indicating if the operation was successful
@@ -111,12 +111,11 @@ class MessagesChatRepository {
         'MessagesChatRepository: Creating connection - userOneId: $userOneId ($userOneType), userTwoId: $userTwoId ($userTwoType)',
       );
 
-      // Validate user types
-      if ((userOneType != 'staff' && userOneType != 'student') ||
-          (userTwoType != 'staff' && userTwoType != 'student')) {
+      const validTypes = ['student', 'guardian', 'teacher', 'admin', 'staff'];
+      if (!validTypes.contains(userOneType) || !validTypes.contains(userTwoType)) {
         return {
           'success': false,
-          'error': 'Invalid user_type. Must be "staff" or "student"',
+          'error': 'Invalid user_type. Must be one of: $validTypes',
         };
       }
 
@@ -201,12 +200,11 @@ class MessagesChatRepository {
         'MessagesChatRepository: Getting connection - userOneId: $userOneId ($userOneType), userTwoId: $userTwoId ($userTwoType)',
       );
 
-      // Validate user types
-      if ((userOneType != 'staff' && userOneType != 'student') ||
-          (userTwoType != 'staff' && userTwoType != 'student')) {
+      const validTypes = ['student', 'guardian', 'teacher', 'admin', 'staff'];
+      if (!validTypes.contains(userOneType) || !validTypes.contains(userTwoType)) {
         return {
           'success': false,
-          'error': 'Invalid user_type. Must be "staff" or "student"',
+          'error': 'Invalid user_type. Must be one of: $validTypes',
         };
       }
 
@@ -274,7 +272,7 @@ class MessagesChatRepository {
   /// Get all chat connections for a user via HTTP API
   ///
   /// [userId] - The user ID (staff_id or student_id)
-  /// [userType] - The user type ('staff' or 'student')
+  /// [userType] - The user type (student, guardian, teacher, admin, or 'staff' for Support inbox)
   /// [requestingStaffId] - When loading Support inbox (userId=0), pass current admin's staff_id so only unclaimed or claimed-by-me threads are returned
   ///
   /// Returns a Map containing:
@@ -291,11 +289,11 @@ class MessagesChatRepository {
         'MessagesChatRepository: Getting connections - userId: $userId, userType: $userType',
       );
 
-      // Validate userType
-      if (userType != 'staff' && userType != 'student') {
+      const validTypes = ['student', 'guardian', 'teacher', 'admin', 'staff'];
+      if (!validTypes.contains(userType)) {
         return {
           'success': false,
-          'error': 'Invalid user_type. Must be "staff" or "student"',
+          'error': 'Invalid user_type. Must be one of: $validTypes',
         };
       }
 
@@ -400,15 +398,14 @@ class MessagesChatRepository {
         'MessagesChatRepository: Saving FCM token - userId: $userId, userType: $userType',
       );
 
-      // Validate userType
-      if (userType != 'staff' && userType != 'student') {
+      const validTypes = ['student', 'guardian', 'teacher', 'admin', 'staff'];
+      if (!validTypes.contains(userType)) {
         return {
           'success': false,
-          'error': 'Invalid user_type. Must be "staff" or "student"',
+          'error': 'Invalid user_type. Must be one of: $validTypes',
         };
       }
 
-      // Call the HTTP API endpoint
       final response = await ApiClient.post(
         endpoint: '/mobile_apis/save_fcm_token.php',
         body: {'user_id': userId, 'user_type': userType, 'fcm_token': fcmToken},

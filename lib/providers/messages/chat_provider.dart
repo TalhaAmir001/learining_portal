@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:learining_portal/models/message_model.dart';
+import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
@@ -10,7 +11,7 @@ import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 class ChatProvider with ChangeNotifier {
   WebSocketClient? _wsClient;
   String? _currentUserId;
-  String? _currentUserType; // 'staff' or 'student'
+  String? _currentUserType; // UserType enum string: student, guardian, teacher, admin
   String? _currentUserApiId; // The actual staff_id or student_id from API
 
   List<MessageModel> _messages = [];
@@ -42,19 +43,12 @@ class ChatProvider with ChangeNotifier {
     _currentUserId = userId;
   }
 
-  // Get user type for WebSocket ('staff' or 'student')
+  // Get user type for WebSocket/API (UserType enum: student, guardian, teacher, admin)
   String _getUserTypeForWebSocket(AuthProvider? authProvider) {
     if (authProvider?.userType != null) {
-      final userType = authProvider!.userType!;
-      // Map app UserType to WebSocket user_type
-      // staff = teacher/admin, student = student/guardian
-      if (userType == UserType.teacher || userType == UserType.admin) {
-        return 'staff';
-      } else {
-        return 'student';
-      }
+      return UserModel.userTypeToApiString(authProvider!.userType!);
     }
-    return _currentUserType ?? 'staff';
+    return _currentUserType ?? 'student';
   }
 
   // Get API user ID (staff_id or student_id) from AuthProvider
@@ -121,24 +115,7 @@ class ChatProvider with ChangeNotifier {
 
     _wsClient!.onMessageSent = (data) {
       debugPrint('ChatProvider: Message sent confirmation');
-      final messageId = data['message_id']?.toString();
-      final senderDisplayName = data['sender_display_name'] as String?;
-      final actualSenderId = data['actual_sender_staff_id']?.toString();
-      if (messageId != null) {
-        // Update temporary message with real id and server-provided display name
-        final tempIndex = _messages.indexWhere(
-          (m) => m.messageId.startsWith('temp_'),
-        );
-        if (tempIndex != -1) {
-          final tempMessage = _messages[tempIndex];
-          _messages[tempIndex] = tempMessage.copyWith(
-            messageId: messageId,
-            senderDisplayName: senderDisplayName ?? tempMessage.senderDisplayName,
-            actualSenderId: actualSenderId ?? tempMessage.actualSenderId,
-          );
-          notifyListeners();
-        }
-      }
+      // No optimistic message: bubble will appear from new_message from server
     };
 
     _wsClient!.onMessagesReceived = (data) {
@@ -150,6 +127,13 @@ class ChatProvider with ChangeNotifier {
           messagesList.cast<Map<String, dynamic>>(),
           hasMore: hasMore,
         );
+      }
+    };
+
+    _wsClient!.onMessagesRead = (data) {
+      final chatId = data['chat_connection_id']?.toString();
+      if (chatId != null && chatId == _chatConnectionId) {
+        _markOwnSentMessagesAsRead();
       }
     };
 
@@ -215,10 +199,38 @@ class ChatProvider with ChangeNotifier {
         if (timeCompare != 0) return timeCompare;
         return a.messageId.compareTo(b.messageId);
       });
+
+      // Auto-mark as read: incoming message arrived while the chat screen is open.
+      // Sending mark_messages_read to the server causes it to broadcast messages_read
+      // back to the original sender so their bubble tick updates to double (seen).
+      final myId = _currentUserApiId;
+      final isIncoming = myId != null &&
+          message.senderId != myId &&
+          message.actualSenderId != myId;
+      if (isIncoming && _chatConnectionId != null) {
+        _wsClient?.markMessagesRead(_chatConnectionId!);
+      }
+
       notifyListeners();
     } catch (e) {
       debugPrint('ChatProvider: Error handling new message: $e');
     }
+  }
+
+  // Called when the other party marks messages as read → update read-ticks on our sent messages
+  void _markOwnSentMessagesAsRead() {
+    final apiUserId = _currentUserApiId;
+    if (apiUserId == null) return;
+    bool changed = false;
+    for (var i = 0; i < _messages.length; i++) {
+      final msg = _messages[i];
+      final isMine = msg.senderId == apiUserId || msg.actualSenderId == apiUserId;
+      if (isMine && !msg.isRead) {
+        _messages[i] = msg.copyWith(isRead: true);
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
   }
 
   // Handle messages received from server (initial load or load-more; server sends latest-first)
@@ -264,13 +276,15 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Get or create chat connection via HTTP API
-  // otherUserId should be the API user ID (staff_id or student_id) of the other user
+  // Get or create chat connection via HTTP API.
+  // otherUserId = API user ID of the other user; when Support, use supportUserId ('0').
+  // otherUserType = when provided (e.g. from Inbox), use it; when Support, always 'staff'.
   Future<String?> _getOrCreateChatConnection(
     String currentUserId,
     String otherUserId,
-    AuthProvider? authProvider,
-  ) async {
+    AuthProvider? authProvider, {
+    String? otherUserType,
+  }) async {
     try {
       final userType = _getUserTypeForWebSocket(authProvider);
       final apiUserId = await _getApiUserId(authProvider);
@@ -279,10 +293,9 @@ class ChatProvider with ChangeNotifier {
         return null;
       }
 
-      // Support user (uid 0) is always staff. Otherwise opposite of current user type.
-      final otherUserType = otherUserId == supportUserId
+      final String resolvedOtherUserType = otherUserId == supportUserId
           ? 'staff'
-          : (userType == 'staff' ? 'student' : 'staff');
+          : (otherUserType ?? (userType == 'admin' || userType == 'staff' ? 'student' : 'staff'));
 
       // Admin opening a support thread: connection is Support <-> other user (student/teacher)
       final isAdminOpeningSupport = authProvider?.userType == UserType.admin && otherUserId != supportUserId;
@@ -292,14 +305,14 @@ class ChatProvider with ChangeNotifier {
       // Get connection via HTTP API
       try {
         debugPrint(
-          'ChatProvider: Requesting connection via HTTP API for users: $userOneId ($userOneType) <-> $otherUserId ($otherUserType)',
+          'ChatProvider: Requesting connection via HTTP API for users: $userOneId ($userOneType) <-> $otherUserId ($resolvedOtherUserType)',
         );
 
         final result = await MessagesChatRepository.getConnection(
           userOneId: userOneId,
           userOneType: userOneType,
           userTwoId: otherUserId,
-          userTwoType: otherUserType,
+          userTwoType: resolvedOtherUserType,
         );
 
         if (result['success'] == true) {
@@ -331,15 +344,14 @@ class ChatProvider with ChangeNotifier {
       );
       try {
         debugPrint(
-          'ChatProvider: Creating connection via HTTP API: $userOneId ($userOneType) <-> $otherUserId ($otherUserType)',
+          'ChatProvider: Creating connection via HTTP API: $userOneId ($userOneType) <-> $otherUserId ($resolvedOtherUserType)',
         );
 
-        // Use HTTP API to create connection
         final result = await MessagesChatRepository.createConnection(
           userOneId: userOneId,
           userOneType: userOneType,
           userTwoId: otherUserId,
-          userTwoType: otherUserType,
+          userTwoType: resolvedOtherUserType,
         );
 
         if (result['success'] == true && result['connection_id'] != null) {
@@ -365,7 +377,7 @@ class ChatProvider with ChangeNotifier {
         'ChatProvider: NOTE: Both users must exist in fl_chat_users table before a connection can be created.',
       );
       debugPrint(
-        'ChatProvider: Please ensure user $apiUserId (type: $userType) and user $otherUserId exist in the database.',
+        'ChatProvider: Please ensure user $apiUserId (type: $userType) and user $otherUserId (type: $resolvedOtherUserType) exist in the database.',
       );
       return null;
     } catch (e) {
@@ -374,10 +386,12 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Initialize chat with another user
+  // Initialize chat with another user.
+  // otherUserType: pass when known (e.g. from Inbox: student, teacher, guardian); when opening Support use null (backend uses 'staff' for Support).
   Future<void> initializeChat(
     String otherUserId, {
     AuthProvider? authProvider,
+    String? otherUserType,
   }) async {
     final currentUserId = getCurrentUserId(authProvider);
     if (currentUserId == null) {
@@ -386,14 +400,13 @@ class ChatProvider with ChangeNotifier {
       return;
     }
 
-    // Initialize WebSocket if not already connected
     await _initializeWebSocket(authProvider);
 
-    // Find or create chat connection
     _chatConnectionId = await _getOrCreateChatConnection(
       currentUserId,
       otherUserId,
       authProvider,
+      otherUserType: otherUserType,
     );
 
     if (_chatConnectionId == null) {
@@ -573,26 +586,6 @@ class ChatProvider with ChangeNotifier {
         ? (text.trim().isEmpty ? 'Photo' : text.trim())
         : (messageType == 'document' ? (text.trim().isEmpty ? 'Document' : text.trim()) : text.trim());
 
-    final optimisticMessage = MessageModel(
-      messageId: 'temp_${DateTime.now().millisecondsSinceEpoch}',
-      chatId: _chatConnectionId!,
-      senderId: apiUserId,
-      text: displayText,
-      timestamp: DateTime.now(),
-      isRead: false,
-      messageType: messageType,
-      imageUrl: imageUrl,
-      uploadProgress: null,
-    );
-
-    _messages.add(optimisticMessage);
-    _messages.sort((a, b) {
-      final timeCompare = a.timestamp.compareTo(b.timestamp);
-      if (timeCompare != 0) return timeCompare;
-      return a.messageId.compareTo(b.messageId);
-    });
-    notifyListeners();
-
     try {
       final userType = _getUserTypeForWebSocket(authProvider);
 
@@ -605,12 +598,8 @@ class ChatProvider with ChangeNotifier {
           messageType: messageType,
           imageUrl: imageUrl,
         );
+        return true;
       } else {
-        // Remove optimistic message on error
-        _messages.removeWhere(
-          (m) => m.messageId == optimisticMessage.messageId,
-        );
-        notifyListeners();
         _errorMessage = 'WebSocket not connected';
         notifyListeners();
         debugPrint(
@@ -618,16 +607,7 @@ class ChatProvider with ChangeNotifier {
         );
         return false;
       }
-
-      // Message will be confirmed via onMessageSent callback
-      // The server will also send it back via onNewMessage
-      // We'll update the temporary message ID when we receive the real one
-
-      return true;
     } catch (e) {
-      // Remove optimistic message on error
-      _messages.removeWhere((m) => m.messageId == optimisticMessage.messageId);
-      notifyListeners();
       _errorMessage = 'Error sending message: ${e.toString()}';
       notifyListeners();
       debugPrint('ChatProvider: Error sending message: $e');

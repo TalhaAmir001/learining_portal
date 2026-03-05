@@ -248,19 +248,12 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Get user type for WebSocket ('staff' or 'student')
+  // Get user type for WebSocket/API (UserType enum: student, guardian, teacher, admin)
   String _getUserTypeForWebSocket() {
     if (_currentUser?.userType != null) {
-      final userType = _currentUser!.userType;
-      // Map app UserType to WebSocket user_type
-      // staff = teacher/admin, student = student/guardian
-      if (userType == UserType.teacher || userType == UserType.admin) {
-        return 'staff';
-      } else {
-        return 'student';
-      }
+      return UserModel.userTypeToApiString(_currentUser!.userType);
     }
-    return 'staff';
+    return 'student';
   }
 
   // Get API user ID (staff_id or student_id) for WebSocket
@@ -512,22 +505,14 @@ class AuthProvider with ChangeNotifier {
     );
   }
 
-  // Create chat user entry in database after login
+  // Create chat user entry in database after login (user_type stored per UserType enum)
   Future<void> _createChatUserEntry(String userId, UserType userType) async {
     try {
-      // Map UserType to API user_type
-      String apiUserType;
-      if (userType == UserType.teacher || userType == UserType.admin) {
-        apiUserType = 'staff';
-      } else {
-        apiUserType = 'student';
-      }
-
+      final apiUserType = UserModel.userTypeToApiString(userType);
       debugPrint(
         'AuthProvider: Creating chat user entry for userId: $userId, type: $apiUserType',
       );
 
-      // Create chat user entry via HTTP API
       final result = await MessagesChatRepository.createChatUser(
         userId: userId,
         userType: apiUserType,
