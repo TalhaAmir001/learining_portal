@@ -1,3 +1,32 @@
 // report message and user
 reply
 active/inactive user
+
+an issue in profile pic of users
+
+
+
+CREATE TABLE `sections` (
+  `id` int(11) NOT NULL,
+  `section` varchar(60) DEFAULT NULL,
+  `is_active` varchar(255) DEFAULT 'no',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+CREATE TABLE `class_sections` (
+  `id` int(11) NOT NULL,
+  `class_id` int(11) DEFAULT NULL,
+  `section_id` int(11) DEFAULT NULL,
+  `is_active` varchar(255) DEFAULT 'no',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+CREATE TABLE `classes` (
+  `id` int(11) NOT NULL,
+  `class` varchar(60) DEFAULT NULL,
+  `is_active` varchar(255) DEFAULT 'no',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;

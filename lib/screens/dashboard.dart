@@ -7,6 +7,7 @@ import 'package:learining_portal/screens/messages/inbox.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/widgets/dashboard_app_bar.dart';
 import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
+import 'package:learining_portal/screens/feedback/daily_feedback_screen.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
@@ -155,6 +156,22 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Add more dashboard items based on user type
     if (userType == UserType.admin) {
       items.addAll([
+        DashboardItem(
+          icon: Icons.feedback_rounded,
+          title: 'Daily Feedback',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DailyFeedbackScreen(),
+              ),
+            );
+          },
+        ),
         DashboardItem(
           icon: Icons.people_rounded,
           title: 'Users',

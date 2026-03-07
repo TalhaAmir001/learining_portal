@@ -230,8 +230,11 @@ class UserResult {
   /// Checks if user is a student
   bool get isStudent => role?.toLowerCase() == 'student';
 
-  /// Checks if user is a guardian
-  bool get isGuardian => role?.toLowerCase() == 'guardian';
+  /// Checks if user is a guardian (API may return 'guardian' or 'parent')
+  bool get isGuardian {
+    final r = role?.toLowerCase();
+    return r == 'guardian' || r == 'parent';
+  }
 
   /// Checks if account is active
   bool get active => isActive?.toLowerCase() == 'yes';

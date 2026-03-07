@@ -105,7 +105,9 @@ class AuthRepository {
         },
       );
 
-      debugPrint('AuthRepository: API response received for user login');
+      debugPrint(
+        'AuthRepository: API response received for user login: ${response}',
+      );
 
       // Parse the response
       final userData = UserDataModel.fromJson(response);

@@ -31,6 +31,15 @@ class UserModel {
     this.additionalData,
   });
 
+  /// Fixes malformed image URL missing slash between domain and path (e.g. ...co.ukuploads -> ...co.uk/uploads).
+  static String? _normalizePhotoUrl(String? url) {
+    if (url == null || url.isEmpty) return url;
+    if (url.contains('co.ukuploads')) {
+      return url.replaceFirst('co.ukuploads', 'co.uk/uploads');
+    }
+    return url;
+  }
+
   // Get full name
   String get fullName {
     if (firstName != null && lastName != null) {
@@ -72,7 +81,7 @@ class UserModel {
       firstName: map['firstName'] as String?,
       lastName: map['lastName'] as String?,
       phoneNumber: map['phoneNumber'] as String?,
-      photoUrl: map['photoUrl'] as String?,
+      photoUrl: _normalizePhotoUrl(map['photoUrl'] as String?),
       userType: _stringToUserType(map['userType'] as String? ?? 'student'),
       createdAt: (map['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate(),
@@ -171,11 +180,12 @@ class UserModel {
     // Build image URL if available
     String? photoUrl;
     if (result.image != null && result.image!.isNotEmpty) {
-      // If image is a full URL, use it; otherwise construct it
+      // If image is a full URL, use it; otherwise construct it (ensure / between host and path)
       if (result.image!.startsWith('http')) {
         photoUrl = result.image;
       } else {
-        photoUrl = 'https://portal.gcsewithrosi.co.uk${result.image}';
+        final path = result.image!.startsWith('/') ? result.image! : '/${result.image!}';
+        photoUrl = 'https://portal.gcsewithrosi.co.uk$path';
       }
     }
 
@@ -252,11 +262,12 @@ class UserModel {
     // Build image URL if available
     String? photoUrl;
     if (result.image != null && result.image!.isNotEmpty) {
-      // If image is a full URL, use it; otherwise construct it
+      // If image is a full URL, use it; otherwise construct it (ensure / between host and path)
       if (result.image!.startsWith('http')) {
         photoUrl = result.image;
       } else {
-        photoUrl = 'https://portal.gcsewithrosi.co.uk${result.image}';
+        final path = result.image!.startsWith('/') ? result.image! : '/${result.image!}';
+        photoUrl = 'https://portal.gcsewithrosi.co.uk$path';
       }
     }
 

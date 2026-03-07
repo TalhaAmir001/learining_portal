@@ -14,6 +14,7 @@ import 'providers/messages/notification_provider.dart';
 import 'providers/profile/profile_details_provider.dart';
 import 'providers/profile/settings_provider.dart';
 import 'providers/send_notifications_provider.dart';
+import 'providers/daily_feedback/daily_feedback_provider.dart';
 import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard.dart';
@@ -204,6 +205,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => NoticeBoardProvider()),
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
         ChangeNotifierProvider(create: (_) => SendNotificationsProvider()),
+        ChangeNotifierProvider(create: (_) => DailyFeedbackProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
       child: MaterialApp(

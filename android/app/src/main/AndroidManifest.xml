@@ -41,6 +41,8 @@
     
     <!-- Internet permission for Firebase -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice recording for Daily Feedback -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Notification permissions for FCM -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
