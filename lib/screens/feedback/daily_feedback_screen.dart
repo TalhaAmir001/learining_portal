@@ -3,10 +3,10 @@ import 'package:learining_portal/network/data_models/daily_feedback/daily_feedba
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/providers/daily_feedback/daily_feedback_provider.dart';
 import 'package:learining_portal/screens/feedback/daily_feedback_form_screen.dart';
+import 'package:learining_portal/screens/feedback/student_feedback_detail_screen.dart';
 import 'package:learining_portal/screens/feedback/voice_player_widget.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class DailyFeedbackScreen extends StatefulWidget {
   const DailyFeedbackScreen({super.key});
@@ -16,23 +16,119 @@ class DailyFeedbackScreen extends StatefulWidget {
 }
 
 class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
+  int? _filterClassId;
+  int? _filterSectionId;
+
+  /// Feedbacks for the selected class and section only.
+  List<DailyFeedbackModel> _feedbacksForClassSection(List<DailyFeedbackModel> feedbacks) {
+    if (_filterClassId == null || _filterSectionId == null) return [];
+    return feedbacks.where((f) {
+      return f.classId == _filterClassId && f.sectionId == _filterSectionId;
+    }).toList();
+  }
+
+  /// Student IDs that have at least one feedback in the selected class/section.
+  Set<int> _studentIdsWithFeedback(List<DailyFeedbackModel> feedbacks) {
+    final list = _feedbacksForClassSection(feedbacks);
+    final ids = <int>{};
+    for (final f in list) {
+      ids.addAll(f.recipientStudentIds);
+    }
+    return ids;
+  }
+
+  /// Students (from provider) who have at least one saved feedback for selected class/section.
+  List<FeedbackStudentModel> _studentsWithFeedback(
+    List<DailyFeedbackModel> feedbacks,
+    List<FeedbackStudentModel> students,
+  ) {
+    final ids = _studentIdsWithFeedback(feedbacks);
+    return students.where((s) => ids.contains(s.studentId)).toList();
+  }
+
+  /// Latest feedback date for a student in the given feedback list (for display).
+  String? _lastFeedbackDateForStudent(int studentId, List<DailyFeedbackModel> feedbacks) {
+    final list = _feedbacksForClassSection(feedbacks)
+        .where((f) => f.recipientStudentIds.contains(studentId))
+        .toList();
+    if (list.isEmpty) return null;
+    DateTime? latestDt;
+    for (final f in list) {
+      if (f.createdAt == null || f.createdAt!.isEmpty) continue;
+      try {
+        final d = DateTime.parse(f.createdAt!).toLocal();
+        if (latestDt == null || d.isAfter(latestDt)) latestDt = d;
+      } catch (_) {}
+    }
+    if (latestDt == null) return null;
+    return '${latestDt.day} ${_monthName(latestDt.month)} ${latestDt.year}';
+  }
+
+  static String _monthName(int month) {
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return names[month - 1];
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _filterClassId = null;
+      _filterSectionId = null;
+    });
+  }
+
+  bool get _hasActiveFilters => _filterClassId != null || _filterSectionId != null;
+
+  /// Unique class options (null + one per class id) so DropdownButton never has duplicate values.
+  List<int?> _uniqueClassOptions(List<FeedbackClassModel> classes) {
+    final result = <int?>[null];
+    final seen = <int>{};
+    for (final c in classes) {
+      if (seen.add(c.id)) result.add(c.id);
+    }
+    return result;
+  }
+
+  /// Value for class dropdown: only use _filterClassId if it exists exactly once in options.
+  int? _effectiveFilterClassId(List<FeedbackClassModel> classes) {
+    if (_filterClassId == null) return null;
+    final options = _uniqueClassOptions(classes);
+    return options.contains(_filterClassId) ? _filterClassId : null;
+  }
+
+  /// Unique section options (null + one per section id).
+  List<int?> _uniqueSectionOptions(List<FeedbackSectionModel> sections) {
+    final result = <int?>[null];
+    final seen = <int>{};
+    for (final s in sections) {
+      if (seen.add(s.id)) result.add(s.id);
+    }
+    return result;
+  }
+
+  /// Value for section dropdown: only use _filterSectionId if it exists in options.
+  int? _effectiveFilterSectionId(List<FeedbackSectionModel> sections) {
+    if (_filterSectionId == null) return null;
+    final options = _uniqueSectionOptions(sections);
+    return options.contains(_filterSectionId) ? _filterSectionId : null;
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = context.read<DailyFeedbackProvider>();
       final staffId = context.read<AuthProvider>().currentUser?.uid;
-      context.read<DailyFeedbackProvider>().loadFeedbacks(staffId);
+      provider.loadFeedbacks(staffId);
+      provider.loadClassesAndSections();
     });
   }
 
-  void _openForm() async {
-    final provider = context.read<DailyFeedbackProvider>();
-    final today = provider.todayFeedback;
+  void _openForm({DailyFeedbackModel? existing}) async {
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (context) => DailyFeedbackFormScreen(
-          feedbackId: today?.id,
-          existingFeedback: today,
+          feedbackId: existing?.id,
+          existingFeedback: existing,
         ),
       ),
     );
@@ -114,13 +210,19 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
                                   provider,
                                 ),
                                 const SizedBox(height: 24),
-                                _buildPastFeedbacksHeader(theme, provider),
+                                _buildFilters(context, theme, provider),
                                 const SizedBox(height: 12),
-                                _buildPastFeedbacksList(
-                                  context,
-                                  theme,
-                                  provider,
-                                ),
+                                if (_filterClassId != null && _filterSectionId != null) ...[
+                                  _buildStudentsWithFeedbackHeader(theme, provider),
+                                  const SizedBox(height: 12),
+                                  _buildStudentsWithFeedbackList(
+                                    context,
+                                    theme,
+                                    provider,
+                                  ),
+                                ] else ...[
+                                  _buildSelectClassSectionPrompt(theme),
+                                ],
                               ],
                             ),
                           ),
@@ -196,7 +298,6 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
     ThemeData theme,
     DailyFeedbackProvider provider,
   ) {
-    final today = provider.todayFeedback;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -227,8 +328,8 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
                   color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  today != null ? Icons.edit_note_rounded : Icons.add_rounded,
+                child: const Icon(
+                  Icons.add_rounded,
                   color: Colors.white,
                   size: 28,
                 ),
@@ -239,7 +340,7 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      today != null ? "Edit today's feedback" : 'New feedback',
+                      'New feedback',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                         color: Colors.white,
@@ -247,9 +348,7 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      today != null
-                          ? 'Update your daily feedback'
-                          : 'Add message, voice & attachments',
+                      'Add message, voice & attachments',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: Colors.white.withOpacity(0.9),
                       ),
@@ -269,22 +368,153 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
     );
   }
 
-  Widget _buildPastFeedbacksHeader(
+  Widget _buildFilters(
+    BuildContext context,
     ThemeData theme,
     DailyFeedbackProvider provider,
   ) {
-    final feedbacks = provider.feedbacks;
+    final classes = provider.classes;
+    final sections = provider.sections;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primaryBlue.withOpacity(0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.filter_list_rounded, size: 18, color: AppColors.primaryBlue),
+              const SizedBox(width: 6),
+              Text(
+                'Class & Section',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              if (_hasActiveFilters)
+                TextButton.icon(
+                  onPressed: _clearFilters,
+                  icon: const Icon(Icons.clear_all_rounded, size: 18),
+                  label: const Text('Clear'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.accentTeal,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildDropdownFilter<int?>(
+                theme: theme,
+                value: _effectiveFilterClassId(classes),
+                label: 'Class',
+                options: _uniqueClassOptions(classes),
+                optionLabel: (v) => v == null ? 'All' : (classes.where((c) => c.id == v).firstOrNull?.className ?? 'Class $v'),
+                onChanged: (v) {
+                  setState(() {
+                    _filterClassId = v;
+                    _filterSectionId = null;
+                  });
+                  provider.clearStudents();
+                  if (v != null) {
+                    provider.loadSectionsForClass(v);
+                  } else {
+                    provider.clearSections();
+                  }
+                },
+              ),
+              _buildDropdownFilter<int?>(
+                theme: theme,
+                value: _effectiveFilterSectionId(sections),
+                label: 'Section',
+                options: _uniqueSectionOptions(sections),
+                optionLabel: (v) => v == null ? 'All' : (sections.where((s) => s.id == v).firstOrNull?.sectionName ?? 'Section $v'),
+                onChanged: (v) {
+                  setState(() => _filterSectionId = v);
+                  if (v != null && _filterClassId != null) {
+                    provider.loadStudents(_filterClassId!, v);
+                  } else {
+                    provider.clearStudents();
+                  }
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectClassSectionPrompt(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.primaryBlue.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primaryBlue.withOpacity(0.1)),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.school_rounded,
+            size: 48,
+            color: AppColors.textSecondary.withOpacity(0.5),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Select class and section',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Students who have received feedback will appear here',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: AppColors.textSecondary.withOpacity(0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStudentsWithFeedbackHeader(
+    ThemeData theme,
+    DailyFeedbackProvider provider,
+  ) {
+    final students = _studentsWithFeedback(provider.feedbacks, provider.students);
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
-          'Past feedbacks',
+          'Students with feedback',
           style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.bold,
             color: AppColors.textPrimary,
           ),
         ),
-        if (feedbacks.isNotEmpty)
+        if (students.isNotEmpty)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
@@ -292,7 +522,7 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              '${feedbacks.length}',
+              '${students.length}',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: AppColors.accentTeal,
                 fontWeight: FontWeight.w600,
@@ -303,12 +533,12 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
     );
   }
 
-  Widget _buildPastFeedbacksList(
+  Widget _buildStudentsWithFeedbackList(
     BuildContext context,
     ThemeData theme,
     DailyFeedbackProvider provider,
   ) {
-    if (provider.loadingFeedbacks) {
+    if (provider.loadingStudents) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 40),
@@ -319,7 +549,7 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Loading feedbacks...',
+                'Loading students...',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                 ),
@@ -329,7 +559,8 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
         ),
       );
     }
-    if (provider.feedbacks.isEmpty) {
+    final students = _studentsWithFeedback(provider.feedbacks, provider.students);
+    if (students.isEmpty) {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
         decoration: BoxDecoration(
@@ -340,19 +571,20 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
         child: Column(
           children: [
             Icon(
-              Icons.feedback_outlined,
+              Icons.person_off_rounded,
               size: 48,
               color: AppColors.textSecondary.withOpacity(0.4),
             ),
             const SizedBox(height: 12),
             Text(
-              'No feedbacks yet',
+              'No students with feedback yet',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: AppColors.textSecondary,
               ),
             ),
             Text(
-              'Your saved feedbacks will appear here',
+              'Add feedback for this class/section to see students here',
+              textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: AppColors.textSecondary.withOpacity(0.8),
               ),
@@ -361,246 +593,183 @@ class _DailyFeedbackScreenState extends State<DailyFeedbackScreen> {
         ),
       );
     }
-    final feedbacks = provider.feedbacks;
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: feedbacks.length,
+      itemCount: students.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
-        return _FeedbackCard(model: feedbacks[index]);
+        final student = students[index];
+        final lastDate = _lastFeedbackDateForStudent(student.studentId, provider.feedbacks);
+        return _StudentWithFeedbackCard(
+          student: student,
+          lastFeedbackDate: lastDate,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => StudentFeedbackDetailScreen(
+                  student: student,
+                  classId: _filterClassId!,
+                  sectionId: _filterSectionId!,
+                ),
+              ),
+            );
+          },
+        );
       },
     );
   }
-}
 
-class _FeedbackCard extends StatelessWidget {
-  final DailyFeedbackModel model;
-
-  const _FeedbackCard({required this.model});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final createdAt = model.createdAt;
-
-    return Container(
-      decoration: BoxDecoration(
+  Widget _buildDropdownFilter<T>({
+    required ThemeData theme,
+    required T? value,
+    required String label,
+    required List<T> options,
+    required String Function(T?) optionLabel,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 100),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+        color: AppColors.backgroundLight,
         borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, AppColors.backgroundLight.withOpacity(0.8)],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-          BoxShadow(
-            color: AppColors.secondaryPurple.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: AppColors.primaryBlue.withOpacity(0.12)),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (createdAt != null && createdAt.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppColors.primaryBlue.withOpacity(0.08),
-                      AppColors.secondaryPurple.withOpacity(0.06),
-                    ],
-                  ),
-                  border: Border(
-                    bottom: BorderSide(
-                      color: AppColors.primaryBlue.withOpacity(0.1),
-                    ),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.access_time_rounded,
-                      size: 16,
-                      color: AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      createdAt,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppColors.textSecondary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isExpanded: true,
+          isDense: true,
+          icon: const Icon(Icons.arrow_drop_down_rounded, size: 20),
+          hint: Text(label, style: theme.textTheme.bodySmall),
+          items: options.map((v) {
+            return DropdownMenuItem<T>(
+              value: v,
+              child: Text(
+                optionLabel(v),
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
               ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if ((model.className != null &&
-                          model.className!.isNotEmpty) ||
-                      (model.sectionName != null &&
-                          model.sectionName!.isNotEmpty)) ...[
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        if (model.className != null &&
-                            model.className!.isNotEmpty)
-                          Chip(
-                            avatar: Icon(
-                              Icons.school_rounded,
-                              size: 16,
-                              color: AppColors.primaryBlue,
-                            ),
-                            label: Text(
-                              model.className!,
-                              style: theme.textTheme.bodySmall,
-                            ),
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        if (model.sectionName != null &&
-                            model.sectionName!.isNotEmpty)
-                          Chip(
-                            avatar: Icon(
-                              Icons.group_rounded,
-                              size: 16,
-                              color: AppColors.secondaryPurple,
-                            ),
-                            label: Text(
-                              model.sectionName!,
-                              style: theme.textTheme.bodySmall,
-                            ),
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        if (model.recipientStudentIds.isNotEmpty)
-                          Text(
-                            '${model.recipientStudentIds.length} student(s)',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  if (model.messageText != null &&
-                      model.messageText!.isNotEmpty) ...[
-                    Text(
-                      model.messageText!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textPrimary,
-                        height: 1.4,
-                      ),
-                    ),
-                    if (model.voiceUrl != null || model.attachments.isNotEmpty)
-                      const SizedBox(height: 12),
-                  ],
-                  if (model.voiceUrl != null && model.voiceUrl!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: VoicePlayerWidget(audioUrl: model.voiceUrl!),
-                    ),
-                  if (model.attachments.isNotEmpty) ...[
-                    if (model.voiceUrl != null && model.voiceUrl!.isNotEmpty)
-                      const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: model.attachments.map((a) {
-                        return _LinkChip(
-                          icon: Icons.attach_file_rounded,
-                          label: a.filename ?? 'Attachment',
-                          url: a.fileUrl,
-                          color: AppColors.secondaryPurple,
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+            );
+          }).toList(),
+          onChanged: (v) => onChanged(v),
         ),
       ),
+    ),
     );
   }
+
 }
 
-class _LinkChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String url;
-  final Color color;
+class _StudentWithFeedbackCard extends StatelessWidget {
+  final FeedbackStudentModel student;
+  final String? lastFeedbackDate;
+  final VoidCallback onTap;
 
-  const _LinkChip({
-    required this.icon,
-    required this.label,
-    required this.url,
-    required this.color,
+  const _StudentWithFeedbackCard({
+    required this.student,
+    required this.lastFeedbackDate,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final classSection = [
+      if (student.className != null && student.className!.isNotEmpty) student.className,
+      if (student.sectionName != null && student.sectionName!.isNotEmpty) student.sectionName,
+    ].join(' • ');
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => _openUrl(url),
-        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withOpacity(0.3)),
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Colors.white, AppColors.backgroundLight.withOpacity(0.8)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryBlue.withOpacity(0.08),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.underline,
-                  ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryBlue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(14),
                 ),
+                child: Icon(
+                  Icons.person_rounded,
+                  size: 28,
+                  color: AppColors.primaryBlue,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      student.displayName,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (classSection.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        classSection,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                    if (lastFeedbackDate != null && lastFeedbackDate!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.schedule_rounded,
+                            size: 14,
+                            color: AppColors.accentTeal,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Last feedback: $lastFeedbackDate',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.accentTeal,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textSecondary,
+                size: 24,
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  Future<void> _openUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
   }
 }

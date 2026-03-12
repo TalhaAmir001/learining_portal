@@ -12,6 +12,7 @@ import 'package:learining_portal/network/firebase_options.dart';
 import 'package:learining_portal/providers/profile/settings_provider.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/main.dart';
+import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/messages/chat.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:provider/provider.dart';
@@ -71,21 +72,36 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   final chatId = message.data['chatId'] ?? message.data['chat_id'];
+  final isDailyFeedback =
+      message.data['type'] == 'daily_feedback' ||
+      message.data['notification_type'] == 'daily_feedback';
   final isNotice =
-      message.data['type'] == 'notice' ||
-      message.data['notification_type'] == 'notice' ||
-      message.data['notice_id'] != null;
+      !isDailyFeedback &&
+      (message.data['type'] == 'notice' ||
+          message.data['notification_type'] == 'notice' ||
+          message.data['notice_id'] != null);
 
   // For notices: only show our notification when the message is data-only (no
   // FCM "notification" block). Otherwise the OS shows one from the notification
   // block and we would show a second, causing two notifications when app is closed.
   final isDataOnlyNotice = isNotice && message.notification == null;
 
+  // For daily_feedback: same as notices — if the server sent a "notification" block,
+  // the system already shows it when app is in background; don't show a second one.
+  final isDataOnlyDailyFeedback = isDailyFeedback && message.notification == null;
+
   final String title;
   final String body;
   final String? payload;
 
-  if (isNotice) {
+  if (isDailyFeedback) {
+    title = 'Daily Feedback';
+    body =
+        message.notification?.body ??
+        message.data['body'] ??
+        'New feedback for your child.';
+    payload = 'daily_feedback';
+  } else if (isNotice) {
     title = 'Notice';
     body =
         (message.data['title'] ??
@@ -106,7 +122,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     payload = chatId;
   }
 
-  if (chatId != null ||
+  if (isDataOnlyDailyFeedback ||
+      chatId != null ||
       message.notification != null && !isNotice ||
       isDataOnlyNotice) {
     final id = (payload?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
@@ -465,13 +482,17 @@ class NotificationService {
     debugPrint('Received foreground message: ${message.messageId}');
 
     final chatId = message.data['chatId'] ?? message.data['chat_id'];
+    final isDailyFeedback =
+        message.data['type'] == 'daily_feedback' ||
+        message.data['notification_type'] == 'daily_feedback';
     final isNotice =
-        message.data['type'] == 'notice' ||
-        message.data['notification_type'] == 'notice' ||
-        message.data['notice_id'] != null;
+        !isDailyFeedback &&
+        (message.data['type'] == 'notice' ||
+            message.data['notification_type'] == 'notice' ||
+            message.data['notice_id'] != null);
 
     // Never show chat notification for our own message (e.g. teacher sent to Support)
-    if (!isNotice) {
+    if (!isNotice && !isDailyFeedback) {
       final senderId = message.data['senderId']?.toString();
       if (senderId != null && _currentUserId != null && senderId == _currentUserId) {
         debugPrint('Skipping notification: sender is current user');
@@ -483,7 +504,14 @@ class NotificationService {
     final String body;
     final String? payload;
 
-    if (isNotice) {
+    if (isDailyFeedback) {
+      title = 'Daily Feedback';
+      body =
+          message.notification?.body ??
+          message.data['body'] ??
+          'New feedback for your child.';
+      payload = 'daily_feedback';
+    } else if (isNotice) {
       title = 'Notice';
       body =
           (message.data['title'] ??
@@ -533,13 +561,19 @@ class NotificationService {
   // Handle notification tap (when app is in background or terminated)
   void _handleNotificationTap(RemoteMessage message) {
     debugPrint('Notification tapped: ${message.messageId}');
+    final isDailyFeedback =
+        message.data['type'] == 'daily_feedback' ||
+        message.data['notification_type'] == 'daily_feedback';
     final isNotice =
-        message.data['type'] == 'notice' ||
-        message.data['notification_type'] == 'notice' ||
-        message.data['notice_id'] != null;
+        !isDailyFeedback &&
+        (message.data['type'] == 'notice' ||
+            message.data['notification_type'] == 'notice' ||
+            message.data['notice_id'] != null);
     final context = navigatorKey.currentContext;
     if (context == null) return;
-    if (isNotice) {
+    if (isDailyFeedback) {
+      _navigateToDailyFeedback(context);
+    } else if (isNotice) {
       _navigateToNoticeBoard(context);
     } else {
       final chatId = message.data['chatId'];
@@ -553,7 +587,9 @@ class NotificationService {
     final payload = response.payload;
     final context = navigatorKey.currentContext;
     if (context == null || payload == null) return;
-    if (payload == 'notice') {
+    if (payload == 'daily_feedback') {
+      _navigateToDailyFeedback(context);
+    } else if (payload == 'notice') {
       _navigateToNoticeBoard(context);
     } else {
       _navigateToChat(payload);
@@ -569,6 +605,20 @@ class NotificationService {
       debugPrint('Navigated to Notice Board');
     } catch (e) {
       debugPrint('Error navigating to notice board: $e');
+    }
+  }
+
+  void _navigateToDailyFeedback(BuildContext context) {
+    try {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const GuardianDailyFeedbackScreen(),
+        ),
+      );
+      debugPrint('Navigated to Daily Feedback');
+    } catch (e) {
+      debugPrint('Error navigating to daily feedback: $e');
     }
   }
 

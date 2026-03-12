@@ -48,8 +48,11 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
       provider.loadClassesAndSections();
       if (widget.existingFeedback != null) {
         _prefillFrom(widget.existingFeedback!);
-        if (_selectedClassId != null && _selectedSectionId != null) {
-          provider.loadStudents(_selectedClassId!, _selectedSectionId!);
+        if (_selectedClassId != null) {
+          provider.loadSectionsForClass(_selectedClassId!);
+          if (_selectedSectionId != null) {
+            provider.loadStudents(_selectedClassId!, _selectedSectionId!);
+          }
         }
       }
     });
@@ -377,6 +380,9 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
     final classes = provider.classes;
     final sections = provider.sections;
     final students = provider.students;
+    // Use dropdown value only if it exists in the current items list (avoids assertion when opening edit before sections/classes load)
+    final classValue = _selectedClassId != null && classes.any((c) => c.id == _selectedClassId) ? _selectedClassId : null;
+    final sectionValue = _selectedSectionId != null && sections.any((s) => s.id == _selectedSectionId) ? _selectedSectionId : null;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -416,7 +422,7 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int?>(
-                  value: _selectedClassId,
+                  value: classValue,
                   isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'Class',
@@ -449,13 +455,18 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
                             _selectedStudentIds.clear();
                           });
                           provider.clearStudents();
+                          if (v != null) {
+                            provider.loadSectionsForClass(v);
+                          } else {
+                            provider.clearSections();
+                          }
                         },
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: DropdownButtonFormField<int?>(
-                  value: _selectedSectionId,
+                  value: sectionValue,
                   isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'Section',
@@ -575,7 +586,7 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
                         });
                       },
                       title: Text(
-                        'Student ${s.studentId}',
+                        s.displayName,
                         style: theme.textTheme.bodyMedium,
                       ),
                       dense: true,
@@ -595,95 +606,103 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
     ThemeData theme,
     DailyFeedbackProvider provider,
   ) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, AppColors.backgroundLight.withOpacity(0.8)],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.1),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: AppColors.secondaryPurple.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Message, voice & attachments',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Voice first — most important
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.accentTeal.withOpacity(0.12),
+                AppColors.primaryBlue.withOpacity(0.06),
+              ],
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _messageController,
-            maxLines: 5,
-            decoration: InputDecoration(
-              labelText: 'Written feedback',
-              hintText: 'Type your message here...',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.accentTeal.withOpacity(0.35),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.accentTeal.withOpacity(0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
-              filled: true,
-              fillColor: Colors.white,
-            ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.accentTeal.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Recommended',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: AppColors.accentTeal,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.mic_rounded, size: 20, color: AppColors.accentTeal),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Voice recording is the best way to save feedback',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
               Material(
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: provider.saving || _uploadingAttachment
                       ? null
                       : (_isRecording ? _stopRecording : _startRecording),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                     decoration: BoxDecoration(
                       color: (_isRecording ? Colors.red : AppColors.accentTeal)
-                          .withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(14),
+                          .withOpacity(_isRecording ? 0.15 : 0.18),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color:
-                            (_isRecording ? Colors.red : AppColors.accentTeal)
-                                .withOpacity(0.35),
+                        color: (_isRecording ? Colors.red : AppColors.accentTeal)
+                            .withOpacity(0.5),
+                        width: 2,
                       ),
                     ),
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
                           _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
-                          size: 22,
-                          color: _isRecording
-                              ? Colors.red
-                              : AppColors.accentTeal,
+                          size: 28,
+                          color: _isRecording ? Colors.red : AppColors.accentTeal,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         Text(
-                          _isRecording ? 'Stop' : 'Record voice',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: _isRecording
-                                ? Colors.red
-                                : AppColors.accentTeal,
+                          _isRecording ? 'Stop recording' : 'Record voice feedback',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: _isRecording ? Colors.red : AppColors.accentTeal,
                           ),
                         ),
                       ],
@@ -692,90 +711,119 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
                 ),
               ),
               if (_recordedPath != null) ...[
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.accentTeal.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: AppColors.accentTeal.withOpacity(0.3),
-                    ),
-                  ),
-                  child: Text(
-                    _uploadedVoiceUrl != null
-                        ? 'Voice ready'
-                        : 'Voice recorded',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: AppColors.accentTeal,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          if (_recordedPath != null) ...[
-            const SizedBox(height: 12),
-            VoicePlayerWidget(localPath: _recordedPath),
-          ],
-          const SizedBox(height: 12),
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: provider.saving || _uploadingAttachment
-                  ? null
-                  : _pickAndUploadAttachments,
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.secondaryPurple.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: AppColors.secondaryPurple.withOpacity(0.25),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                const SizedBox(height: 12),
+                Row(
                   children: [
-                    _uploadingAttachment
-                        ? SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                AppColors.secondaryPurple,
-                              ),
-                            ),
-                          )
-                        : Icon(
-                            Icons.attach_file_rounded,
-                            size: 22,
-                            color: AppColors.secondaryPurple,
-                          ),
+                    Icon(Icons.check_circle_rounded, size: 20, color: AppColors.accentTeal),
                     const SizedBox(width: 8),
                     Text(
-                      _uploadingAttachment ? 'Uploading...' : 'Add attachments',
+                      _uploadedVoiceUrl != null ? 'Voice ready to save' : 'Voice recorded',
                       style: theme.textTheme.bodyMedium?.copyWith(
+                        color: AppColors.accentTeal,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.secondaryPurple,
                       ),
                     ),
                   ],
                 ),
-              ),
-            ),
+                const SizedBox(height: 8),
+                VoicePlayerWidget(localPath: _recordedPath),
+              ],
+            ],
           ),
-          if (_pendingAttachments.isNotEmpty)
-            ...List.generate(_pendingAttachments.length, (i) {
+        ),
+        const SizedBox(height: 16),
+        // Optional: written message & attachments
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryBlue.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Optional: add more',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _messageController,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: 'Written message',
+                  hintText: 'Add a short note if you like...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: AppColors.backgroundLight.withOpacity(0.5),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: provider.saving || _uploadingAttachment
+                      ? null
+                      : _pickAndUploadAttachments,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.secondaryPurple.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.secondaryPurple.withOpacity(0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _uploadingAttachment
+                            ? SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    AppColors.secondaryPurple,
+                                  ),
+                                ),
+                              )
+                            : Icon(
+                                Icons.attach_file_rounded,
+                                size: 22,
+                                color: AppColors.secondaryPurple,
+                              ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _uploadingAttachment ? 'Uploading...' : 'Add attachments',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.secondaryPurple,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (_pendingAttachments.isNotEmpty)
+                ...List.generate(_pendingAttachments.length, (i) {
               final e = _pendingAttachments[i];
               return Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -790,19 +838,21 @@ class _DailyFeedbackFormScreenState extends State<DailyFeedbackFormScreen> {
                 ),
               );
             }),
-          if (provider.saveError != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                provider.saveError!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 12,
+              if (provider.saveError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    provider.saveError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-        ],
-      ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

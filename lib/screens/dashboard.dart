@@ -8,6 +8,7 @@ import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/widgets/dashboard_app_bar.dart';
 import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/feedback/daily_feedback_screen.dart';
+import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
@@ -153,9 +154,9 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    // Add more dashboard items based on user type
+    // Daily Feedback: admin sees full screen, guardian sees feedback for their children
     if (userType == UserType.admin) {
-      items.addAll([
+      items.add(
         DashboardItem(
           icon: Icons.feedback_rounded,
           title: 'Daily Feedback',
@@ -172,6 +173,31 @@ class _DashboardScreenState extends State<DashboardScreen>
             );
           },
         ),
+      );
+    } else if (userType == UserType.guardian) {
+      items.add(
+        DashboardItem(
+          icon: Icons.feedback_rounded,
+          title: 'Daily Feedback',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const GuardianDailyFeedbackScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // Add more dashboard items based on user type (admin only)
+    if (userType == UserType.admin) {
+      items.addAll([
         DashboardItem(
           icon: Icons.people_rounded,
           title: 'Users',

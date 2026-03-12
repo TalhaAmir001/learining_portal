@@ -220,6 +220,13 @@ class AuthProvider with ChangeNotifier {
   String? get currentUserId =>
       _currentUserId; // Expose current user ID (Firestore document ID)
 
+  /// ID used for API/chat/fl_chat_users (guardian = parent id, others = uid). Use this when saving FCM token to MySQL.
+  String? get apiUserIdForChat {
+    if (_currentUser == null) return null;
+    if (_currentUser!.userType == UserType.guardian) return _currentUser!.id;
+    return _currentUser!.uid;
+  }
+
   // Convenience getters for backward compatibility
   String? get userEmail => _currentUser?.email;
   String? get userName => _currentUser?.fullName;
@@ -256,12 +263,14 @@ class AuthProvider with ChangeNotifier {
     return 'student';
   }
 
-  // Get API user ID (staff_id or student_id) for WebSocket
+  // Get API user ID (staff_id, student_id, teacher_id, or parent_id) for WebSocket / fl_chat_users
   String? _getApiUserIdForWebSocket() {
-    // The uid field in UserModel is the actual API ID
-    // For admin/teacher: it's result.id from AdminDataModel
-    // For student/guardian: it's result.id from UserDataModel
-    return _currentUser?.uid;
+    if (_currentUser == null) return null;
+    // Guardian: use id (parent_id) for fl_chat_users and feedback API
+    if (_currentUser!.userType == UserType.guardian) {
+      return _currentUser!.id;
+    }
+    return _currentUser!.uid;
   }
 
   // Initialize WebSocket connection
@@ -707,8 +716,12 @@ class AuthProvider with ChangeNotifier {
       final documentId = userResult.userId.toString();
       await _saveUserToFirestore(_currentUser!, documentId: documentId);
 
-      // Create chat user entry in database (non-blocking)
-      _createChatUserEntry(documentId, userType).catchError((error) {
+      // Create chat user in fl_chat_users: use parent id for guardian (matches students.parent_id), user_id for student
+      final chatUserId =
+          userType == UserType.guardian
+              ? userResult.id.toString()
+              : documentId;
+      _createChatUserEntry(chatUserId, userType).catchError((error) {
         debugPrint('Error creating chat user entry: $error');
         // Don't fail login if chat user creation fails
       });

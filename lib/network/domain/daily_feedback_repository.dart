@@ -31,6 +31,29 @@ class DailyFeedbackRepository {
     }
   }
 
+  /// Fetch daily feedbacks for a guardian/parent (feedbacks where recipient includes any of their children).
+  static Future<List<DailyFeedbackModel>> getFeedbacksForGuardian({
+    required String parentId,
+  }) async {
+    try {
+      final response = await ApiClient.get(
+        endpoint: '/mobile_apis/get_daily_feedbacks_for_guardian.php',
+        queryParameters: {'parent_id': parentId},
+      );
+      if (response['success'] == true && response['feedbacks'] != null) {
+        final list = response['feedbacks'] as List<dynamic>;
+        return list
+            .map((e) =>
+                DailyFeedbackModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } on ApiException catch (e) {
+      debugPrint('DailyFeedbackRepository getFeedbacksForGuardian: ${e.message}');
+      return [];
+    }
+  }
+
   /// Fetch classes for feedback targeting.
   static Future<List<FeedbackClassModel>> getClasses() async {
     try {
@@ -51,11 +74,14 @@ class DailyFeedbackRepository {
     }
   }
 
-  /// Fetch sections for feedback targeting.
-  static Future<List<FeedbackSectionModel>> getSections() async {
+  /// Fetch sections for feedback targeting. If [classId] is provided, returns only sections for that class.
+  static Future<List<FeedbackSectionModel>> getSections({int? classId}) async {
     try {
       final response = await ApiClient.get(
         endpoint: '/mobile_apis/get_feedback_sections.php',
+        queryParameters: classId != null && classId > 0
+            ? {'class_id': classId.toString()}
+            : null,
       );
       if (response['success'] == true && response['sections'] != null) {
         final list = response['sections'] as List<dynamic>;
@@ -112,17 +138,17 @@ class DailyFeedbackRepository {
     try {
       final body = <String, dynamic>{
         'staff_id': staffId,
-        if (feedbackId != null && feedbackId > 0) 'feedback_id': feedbackId.toString(),
-        if (classId != null && classId > 0) 'class_id': classId.toString(),
-        if (sectionId != null && sectionId > 0) 'section_id': sectionId.toString(),
+        if (feedbackId != null && feedbackId > 0) 'feedback_id': feedbackId,
+        if (classId != null && classId > 0) 'class_id': classId,
+        if (sectionId != null && sectionId > 0) 'section_id': sectionId,
         if (recipientStudentIds != null && recipientStudentIds.isNotEmpty)
-          'recipient_student_ids': jsonEncode(recipientStudentIds),
+          'recipient_student_ids': recipientStudentIds,
         if (messageText != null && messageText.isNotEmpty) 'message_text': messageText,
         if (voiceUrl != null && voiceUrl.isNotEmpty) 'voice_url': voiceUrl,
         if (attachmentUrls != null && attachmentUrls.isNotEmpty)
-          'attachment_urls': jsonEncode(attachmentUrls),
+          'attachment_urls': attachmentUrls,
       };
-      final response = await ApiClient.post(
+      final response = await ApiClient.postJson(
         endpoint: '/mobile_apis/save_daily_feedback.php',
         body: body,
       );
@@ -140,6 +166,25 @@ class DailyFeedbackRepository {
       };
     } on ApiException catch (e) {
       return {'success': false, 'error': e.message};
+    }
+  }
+
+  /// Mark feedback voice as played by a parent/guardian (for guardian view).
+  static Future<bool> markFeedbackVoicePlayed({
+    required int feedbackId,
+    required String parentId,
+  }) async {
+    try {
+      final response = await ApiClient.postJson(
+        endpoint: '/mobile_apis/mark_feedback_voice_played.php',
+        body: {
+          'feedback_id': feedbackId,
+          'parent_id': parentId,
+        },
+      );
+      return response['success'] == true;
+    } on ApiException catch (_) {
+      return false;
     }
   }
 

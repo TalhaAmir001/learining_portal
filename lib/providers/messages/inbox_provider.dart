@@ -73,11 +73,12 @@ class InboxProvider with ChangeNotifier {
     }
   }
 
-  // Get API user ID (staff_id or student_id) from AuthProvider
-  // The uid in UserModel is the actual API ID
+  // Get API user ID (staff_id, student_id, teacher_id, or parent_id) for fl_chat_users
   String? _getApiUserId() {
     if (_authProvider?.currentUser != null) {
-      return _authProvider!.currentUser!.uid;
+      final user = _authProvider!.currentUser!;
+      if (user.userType == UserType.guardian) return user.id;
+      return user.uid;
     }
     return null;
   }

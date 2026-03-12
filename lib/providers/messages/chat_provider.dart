@@ -51,14 +51,12 @@ class ChatProvider with ChangeNotifier {
     return _currentUserType ?? 'student';
   }
 
-  // Get API user ID (staff_id or student_id) from AuthProvider
-  // The uid in UserModel is the actual API ID (id from admin/student API response)
+  // Get API user ID (staff_id, student_id, teacher_id, or parent_id) from AuthProvider for fl_chat_users
   Future<String?> _getApiUserId(AuthProvider? authProvider) async {
     if (authProvider?.currentUser != null) {
-      // The uid field in UserModel is the actual API ID
-      // For admin/teacher: it's result.id from AdminDataModel
-      // For student/guardian: it's result.id from UserDataModel
-      return authProvider!.currentUser!.uid;
+      final user = authProvider!.currentUser!;
+      if (user.userType == UserType.guardian) return user.id;
+      return user.uid;
     }
     return _currentUserApiId;
   }

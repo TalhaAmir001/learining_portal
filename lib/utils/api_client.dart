@@ -7,13 +7,7 @@ class ApiClient {
   // Timeout duration for requests
   static const Duration timeoutDuration = Duration(seconds: 30);
 
-  /// Makes a POST request to the specified endpoint
-  /// 
-  /// [endpoint] - The API endpoint (e.g., '/gauthenticate/verfiy_login')
-  /// [body] - The request body as a Map
-  /// [headers] - Optional custom headers
-  /// 
-  /// Returns a Future with the response data as Map<String, dynamic>
+  /// Makes a POST request to the specified endpoint (form-urlencoded body).
   static Future<Map<String, dynamic>> post({
     required String endpoint,
     required Map<String, dynamic> body,
@@ -21,23 +15,43 @@ class ApiClient {
   }) async {
     try {
       final uri = Uri.parse('$baseUrl$endpoint');
-      
       final defaultHeaders = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json',
         if (headers != null) ...headers,
       };
-
-      // Convert body to form-urlencoded format, filtering out null values
       final encodedBody = body.entries
           .where((e) => e.value != null)
           .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
           .join('&');
-
       final response = await http
           .post(uri, headers: defaultHeaders, body: encodedBody)
           .timeout(timeoutDuration);
+      return _handleResponse(response);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    } on Exception catch (e) {
+      throw ApiException('Unexpected error: ${e.toString()}');
+    }
+  }
 
+  /// Makes a POST request with JSON body (for APIs that read php://input with json_decode).
+  static Future<Map<String, dynamic>> postJson({
+    required String endpoint,
+    required Map<String, dynamic> body,
+    Map<String, String>? headers,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl$endpoint');
+      final defaultHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (headers != null) ...headers,
+      };
+      final encodedBody = json.encode(body);
+      final response = await http
+          .post(uri, headers: defaultHeaders, body: encodedBody)
+          .timeout(timeoutDuration);
       return _handleResponse(response);
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');

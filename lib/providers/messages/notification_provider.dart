@@ -87,6 +87,9 @@ class NotificationProvider with ChangeNotifier {
     final userId = authProvider.currentUserId;
     if (userId == null) return;
 
+    // For MySQL/fl_chat_users use API id (guardian = parent id) so FCM lookup finds the row
+    final apiUserId = authProvider.apiUserIdForChat ?? userId;
+
     final typeForApi = authProvider.userType != null
         ? UserModel.userTypeToApiString(authProvider.userType!)
         : 'student';
@@ -101,15 +104,15 @@ class NotificationProvider with ChangeNotifier {
           );
           return false;
         }
-        // Save to Firestore (once)
+        // Save to Firestore (once) using document id
         await _notificationService.saveFCMTokenToUser(
           userId,
           token,
           userType: typeForApi,
         );
-        // Save to MySQL (so WebSocket server can send FCM when app is closed)
+        // Save to MySQL (so backend can send FCM) using API id (parent_id for guardian)
         final result = await MessagesChatRepository.saveFCMToken(
-          userId: userId,
+          userId: apiUserId,
           userType: typeForApi,
           fcmToken: token,
         );

@@ -82,24 +82,56 @@ class DailyFeedbackProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Load classes and sections (for feedback form targeting). Call once when opening the form.
-  Future<void> loadClassesAndSections() async {
-    _loadingClasses = true;
-    _loadingSections = true;
-    _classesError = null;
-    _sectionsError = null;
+  /// Load feedbacks for a guardian/parent (feedbacks where recipient includes any of their children).
+  Future<void> loadFeedbacksForGuardian(String? parentId) async {
+    if (parentId == null || parentId.isEmpty) {
+      _feedbacks = [];
+      _loadingFeedbacks = false;
+      _feedbacksError = null;
+      notifyListeners();
+      return;
+    }
+
+    _loadingFeedbacks = true;
+    _feedbacksError = null;
     notifyListeners();
 
-    final results = await Future.wait([
-      DailyFeedbackRepository.getClasses(),
-      DailyFeedbackRepository.getSections(),
-    ]);
+    final list = await DailyFeedbackRepository.getFeedbacksForGuardian(parentId: parentId);
 
-    _classes = results[0] as List<FeedbackClassModel>;
-    _sections = results[1] as List<FeedbackSectionModel>;
-    _loadingClasses = false;
-    _loadingSections = false;
+    _feedbacks = list;
+    _loadingFeedbacks = false;
+    _feedbacksError = null;
+    notifyListeners();
+  }
+
+  /// Load classes (and optionally all sections). Call when opening the form or list. Sections are loaded per class via [loadSectionsForClass].
+  Future<void> loadClassesAndSections() async {
+    _loadingClasses = true;
     _classesError = null;
+    notifyListeners();
+
+    _classes = await DailyFeedbackRepository.getClasses();
+    _loadingClasses = false;
+    _classesError = null;
+    notifyListeners();
+  }
+
+  /// Load sections for the given class only. Call when user selects a class (list filter or form).
+  Future<void> loadSectionsForClass(int classId) async {
+    _loadingSections = true;
+    _sectionsError = null;
+    _sections = [];
+    notifyListeners();
+
+    _sections = await DailyFeedbackRepository.getSections(classId: classId);
+    _loadingSections = false;
+    _sectionsError = null;
+    notifyListeners();
+  }
+
+  /// Clear sections list (e.g. when class is cleared).
+  void clearSections() {
+    _sections = [];
     _sectionsError = null;
     notifyListeners();
   }

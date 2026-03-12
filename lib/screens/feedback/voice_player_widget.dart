@@ -7,11 +7,14 @@ import 'package:url_launcher/url_launcher.dart';
 class VoicePlayerWidget extends StatefulWidget {
   final String? audioUrl;
   final String? localPath;
+  /// Called when the user starts playback (e.g. to mark voice as played by parent).
+  final VoidCallback? onPlayStarted;
 
   const VoicePlayerWidget({
     super.key,
     this.audioUrl,
     this.localPath,
+    this.onPlayStarted,
   }) : assert(audioUrl != null || localPath != null);
 
   @override
@@ -108,6 +111,7 @@ class _VoicePlayerWidgetState extends State<VoicePlayerWidget> {
                           if (isPlaying) {
                             await _player.pause();
                           } else {
+                            widget.onPlayStarted?.call();
                             await _player.play();
                           }
                         },

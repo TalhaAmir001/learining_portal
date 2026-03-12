@@ -34,20 +34,36 @@ class FeedbackSectionModel {
 class FeedbackStudentModel {
   final int chatUserId;
   final int studentId;
+  final String? firstname;
+  final String? username;
   final String? className;
   final String? sectionName;
 
   FeedbackStudentModel({
     required this.chatUserId,
     required this.studentId,
+    this.firstname,
+    this.username,
     this.className,
     this.sectionName,
   });
+
+  /// Display name: "first name - username" when both set, else firstname or username or "Student {id}".
+  String get displayName {
+    final fn = (firstname != null && firstname!.trim().isNotEmpty) ? firstname!.trim() : null;
+    final un = (username != null && username!.trim().isNotEmpty) ? username!.trim() : null;
+    if (fn != null && un != null) return '$fn - $un';
+    if (fn != null) return fn;
+    if (un != null) return un;
+    return 'Student $studentId';
+  }
 
   factory FeedbackStudentModel.fromJson(Map<String, dynamic> json) {
     return FeedbackStudentModel(
       chatUserId: _parseInt(json['chat_user_id']),
       studentId: _parseInt(json['student_id']),
+      firstname: json['firstname'] as String?,
+      username: json['username'] as String?,
       className: json['class_name'] as String?,
       sectionName: json['section_name'] as String?,
     );
@@ -92,6 +108,10 @@ class DailyFeedbackModel {
   final String? createdAt;
   final String? updatedAt;
   final List<DailyFeedbackAttachmentModel> attachments;
+  /// For guardian view: names of this parent's children who are recipients (from API recipient_child_names).
+  final List<String> recipientChildNames;
+  /// For guardian view: true if this parent has played the voice recording (from API voice_played_by_parent).
+  final bool voicePlayedByParent;
 
   DailyFeedbackModel({
     required this.id,
@@ -106,6 +126,8 @@ class DailyFeedbackModel {
     this.createdAt,
     this.updatedAt,
     this.attachments = const [],
+    this.recipientChildNames = const [],
+    this.voicePlayedByParent = false,
   });
 
   factory DailyFeedbackModel.fromJson(Map<String, dynamic> json) {
@@ -126,6 +148,16 @@ class DailyFeedbackModel {
     } else if (rec is List) {
       recipientIds = rec.map((e) => _parseInt(e)).where((e) => e > 0).toList();
     }
+    List<String> childNames = [];
+    final namesList = json['recipient_child_names'];
+    if (namesList is List) {
+      for (final e in namesList) {
+        if (e != null && e.toString().trim().isNotEmpty) {
+          childNames.add(e.toString().trim());
+        }
+      }
+    }
+    final voicePlayedByParent = json['voice_played_by_parent'] == true;
     return DailyFeedbackModel(
       id: _parseInt(json['id']),
       staffId: _parseInt(json['staff_id']),
@@ -139,6 +171,8 @@ class DailyFeedbackModel {
       createdAt: json['created_at'] as String?,
       updatedAt: json['updated_at'] as String?,
       attachments: attachments,
+      recipientChildNames: childNames,
+      voicePlayedByParent: voicePlayedByParent,
     );
   }
 }
@@ -154,7 +188,8 @@ List<int>? _parseJsonIntList(String s) {
 
 int? _parseIntNullable(dynamic v) {
   if (v == null) return null;
-  if (v is int) return v;
+  if (v is int) return v > 0 ? v : null;
+  if (v is num) return v.toInt() > 0 ? v.toInt() : null;
   if (v is String) {
     final n = int.tryParse(v);
     return n != null && n > 0 ? n : null;
@@ -165,6 +200,7 @@ int? _parseIntNullable(dynamic v) {
 int _parseInt(dynamic v) {
   if (v == null) return 0;
   if (v is int) return v;
+  if (v is num) return v.toInt();
   if (v is String) return int.tryParse(v) ?? 0;
   return 0;
 }

@@ -48,6 +48,14 @@ class UserModel {
     return displayName ?? email.split('@')[0];
   }
 
+  /// API id (e.g. parent id for guardian). Use this for guardian feedback and fl_chat_users.parent_id.
+  String? get id {
+    final v = additionalData?['id'];
+    if (v == null) return null;
+    if (v is int) return v.toString();
+    return v.toString();
+  }
+
   // Convert UserModel to Firestore document
   Map<String, dynamic> toFirestore() {
     final map = <String, dynamic>{
@@ -72,8 +80,31 @@ class UserModel {
     return UserModel.fromMap(data, doc.id);
   }
 
-  // Create UserModel from Map
+  // Create UserModel from Map (Firestore may store additionalData keys at top level when spread)
   factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
+    Map<String, dynamic>? additionalData =
+        map['additionalData'] as Map<String, dynamic>?;
+    if (additionalData == null) {
+      final extra = <String, dynamic>{};
+      for (final k in [
+        'id',
+        'user_id',
+        'username',
+        'admission_no',
+        'guardian_name',
+        'gender',
+        'language',
+        'lang_id',
+        'currency_id',
+        'is_active',
+        'created_at',
+        'updated_at',
+        'childs',
+      ]) {
+        if (map[k] != null) extra[k] = map[k];
+      }
+      if (extra.isNotEmpty) additionalData = extra;
+    }
     return UserModel(
       uid: uid,
       email: map['email'] as String? ?? '',
@@ -85,7 +116,7 @@ class UserModel {
       userType: _stringToUserType(map['userType'] as String? ?? 'student'),
       createdAt: (map['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate(),
-      additionalData: map['additionalData'] as Map<String, dynamic>?,
+      additionalData: additionalData,
     );
   }
 
@@ -227,8 +258,9 @@ class UserModel {
       );
     }
 
-    // Build additional data from user result
+    // Build additional data from user result (id = parent/student record id; use for guardian parent_id and feedback API)
     final additionalData = <String, dynamic>{
+      'id': result.id,
       'user_id': result.userId,
       'username': result.username,
       'admission_no': result.admissionNo,
