@@ -15,6 +15,7 @@ import 'package:learining_portal/main.dart';
 import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/messages/chat.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
+import 'package:learining_portal/screens/tickets/ticket_detail_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
@@ -89,6 +90,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // For daily_feedback: same as notices — if the server sent a "notification" block,
   // the system already shows it when app is in background; don't show a second one.
   final isDataOnlyDailyFeedback = isDailyFeedback && message.notification == null;
+  final isTicketCreated = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_created');
+  final isTicketReply = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_reply');
+  final hasTicketId = (message.data['ticket_id']?.toString() ?? '').isNotEmpty;
+  final isDataOnlyTicket = (isTicketCreated || isTicketReply) && message.notification == null && hasTicketId;
 
   final String title;
   final String body;
@@ -111,6 +116,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                 'New notice')
             .toString();
     payload = 'notice';
+  } else if (isTicketCreated || isTicketReply) {
+    title = message.data['title']?.toString() ?? (isTicketCreated ? 'New support ticket' : 'New reply on ticket');
+    body = message.data['body']?.toString() ?? message.data['subject']?.toString() ?? message.data['message']?.toString() ?? (isTicketCreated ? 'A new ticket was submitted.' : 'You have a new reply.');
+    final ticketId = message.data['ticket_id']?.toString();
+    payload = (ticketId != null && ticketId.isNotEmpty) ? 'ticket_$ticketId' : null;
   } else {
     title =
         message.notification?.title ?? message.data['title'] ?? 'New message';
@@ -123,6 +133,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   if (isDataOnlyDailyFeedback ||
+      isDataOnlyTicket ||
       chatId != null ||
       message.notification != null && !isNotice ||
       isDataOnlyNotice) {
@@ -490,9 +501,11 @@ class NotificationService {
         (message.data['type'] == 'notice' ||
             message.data['notification_type'] == 'notice' ||
             message.data['notice_id'] != null);
+    final isTicketCreated = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_created');
+    final isTicketReply = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_reply');
 
     // Never show chat notification for our own message (e.g. teacher sent to Support)
-    if (!isNotice && !isDailyFeedback) {
+    if (!isNotice && !isDailyFeedback && !isTicketCreated && !isTicketReply) {
       final senderId = message.data['senderId']?.toString();
       if (senderId != null && _currentUserId != null && senderId == _currentUserId) {
         debugPrint('Skipping notification: sender is current user');
@@ -521,15 +534,16 @@ class NotificationService {
                   'New notice')
               .toString();
       payload = 'notice';
+    } else if (isTicketCreated || isTicketReply) {
+      title = message.data['title']?.toString() ?? (isTicketCreated ? 'New support ticket' : 'New reply on ticket');
+      body = message.data['body']?.toString() ?? message.data['subject']?.toString() ?? message.data['message']?.toString() ?? (isTicketCreated ? 'A new ticket was submitted.' : 'You have a new reply.');
+      final ticketId = message.data['ticket_id']?.toString();
+      payload = (ticketId != null && ticketId.isNotEmpty) ? 'ticket_$ticketId' : null;
     } else {
-      title =
-          message.notification?.title ?? message.data['title'] ?? 'New message';
-      body =
-          message.notification?.body ??
-          message.data['message'] ??
-          message.data['body'] ??
-          '';
-      payload = chatId;
+      // Chat message: do not show a local notification when app is in foreground,
+      // because the same message is already delivered via WebSocket and will trigger
+      // showNotificationForIncomingMessage. Showing here would cause double notification.
+      return;
     }
 
     if (title.isNotEmpty || body.isNotEmpty) {
@@ -569,12 +583,21 @@ class NotificationService {
         (message.data['type'] == 'notice' ||
             message.data['notification_type'] == 'notice' ||
             message.data['notice_id'] != null);
+    final isTicket = !isDailyFeedback && !isNotice &&
+        (message.data['type'] == 'ticket_created' || message.data['type'] == 'ticket_reply');
     final context = navigatorKey.currentContext;
     if (context == null) return;
     if (isDailyFeedback) {
       _navigateToDailyFeedback(context);
     } else if (isNotice) {
       _navigateToNoticeBoard(context);
+    } else if (isTicket) {
+      final ticketIdStr = message.data['ticket_id']?.toString();
+      final subject = message.data['subject']?.toString() ?? 'Ticket';
+      if (ticketIdStr != null && ticketIdStr.isNotEmpty) {
+        final ticketId = int.tryParse(ticketIdStr);
+        if (ticketId != null) _navigateToTicket(context, ticketId, subject);
+      }
     } else {
       final chatId = message.data['chatId'];
       if (chatId != null) _navigateToChat(chatId);
@@ -591,8 +614,29 @@ class NotificationService {
       _navigateToDailyFeedback(context);
     } else if (payload == 'notice') {
       _navigateToNoticeBoard(context);
+    } else if (payload.startsWith('ticket_')) {
+      final idStr = payload.substring(7);
+      final ticketId = int.tryParse(idStr);
+      if (ticketId != null) _navigateToTicket(context, ticketId, 'Ticket');
     } else {
       _navigateToChat(payload);
+    }
+  }
+
+  void _navigateToTicket(BuildContext context, int ticketId, String subject) {
+    try {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TicketDetailScreen(
+            ticketId: ticketId,
+            ticketSubject: subject,
+          ),
+        ),
+      );
+      debugPrint('Navigated to ticket: $ticketId');
+    } catch (e) {
+      debugPrint('Error navigating to ticket: $e');
     }
   }
 

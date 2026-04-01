@@ -101,6 +101,58 @@ function getDbConnection()
     return $mysqli;
 }
 
+/**
+ * Get parent/guardian display name from users table using users.id only (same as support tickets).
+ * Parents are stored in users table; for parents we use users.id (primary key), NOT users.user_id.
+ */
+function getParentDisplayNameByUserId($mysqli, $parent_id) {
+    if (!$mysqli || $parent_id === null || $parent_id === '') return null;
+    $id = $mysqli->real_escape_string((string) $parent_id);
+    $res = $mysqli->query("SELECT username FROM users WHERE id = '$id' LIMIT 1");
+    if (!$res || !($row = $res->fetch_assoc())) return null;
+    $username = trim((string)($row['username'] ?? ''));
+    if ($username !== '') return $username;
+    $fn = trim((string)($row['firstname'] ?? ''));
+    $ln = trim((string)($row['lastname'] ?? ''));
+    if ($fn !== '' || $ln !== '') return trim("$fn $ln");
+    return null;
+}
+
+/**
+ * Get display name for a user by id and type (for inbox listing).
+ * Staff/teacher: staff.name; Student: students + users.user_id; Guardian/parent: users.id only (like support tickets).
+ */
+function getDisplayNameForUser($mysqli, $user_id, $user_type) {
+    if (!$mysqli || $user_id === null || $user_id === '') return null;
+    $id = $mysqli->real_escape_string((string) $user_id);
+    $ut = $user_type !== null ? strtolower(trim((string) $user_type)) : '';
+    if (in_array($ut, ['staff', 'admin', 'teacher'], true)) {
+        $res = $mysqli->query("SELECT name FROM staff WHERE id = '$id' LIMIT 1");
+        if ($res && $row = $res->fetch_assoc() && !empty(trim((string)($row['name'] ?? '')))) {
+            return trim($row['name']);
+        }
+        return null;
+    }
+    if (in_array($ut, ['guardian', 'parent'], true)) {
+        return getParentDisplayNameByUserId($mysqli, $user_id);
+    }
+    if ($ut === '') {
+        $name = getParentDisplayNameByUserId($mysqli, $user_id);
+        if ($name !== null) return $name;
+    }
+    $res = $mysqli->query("SELECT firstname, lastname FROM students WHERE id = '$id' LIMIT 1");
+    if ($res && $row = $res->fetch_assoc()) {
+        $fn = trim((string)($row['firstname'] ?? ''));
+        $ln = trim((string)($row['lastname'] ?? ''));
+        if ($fn !== '' || $ln !== '') return trim("$fn $ln");
+    }
+    $res = $mysqli->query("SELECT username FROM users WHERE user_id = '$id' LIMIT 1");
+    if ($res && $row = $res->fetch_assoc() && !empty(trim((string)($row['username'] ?? '')))) {
+        return trim($row['username']);
+    }
+    return null;
+}
+
 /** Column name in fl_chat_users for this user_type: staff_id (admin/Support), student_id, teacher_id, parent_id. */
 function getIdColumnForUserType($user_type) {
     $t = strtolower(trim($user_type));
@@ -222,6 +274,7 @@ function getUserConnections($chat_user_id)
             if ($other_user_id !== null) {
                 $other_user_id = (string) $other_user_id;
             }
+            $other_user_name = getDisplayNameForUser($mysqli, $other_user_id, $other_user_type);
 
             // Determine sender of last message
             // In fl_chat_messages, chat_user_id is the receiver
@@ -257,6 +310,12 @@ function getUserConnections($chat_user_id)
 
             $u1 = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
             $u2 = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
+            $conn_id = $mysqli->real_escape_string($row['id']);
+            $unread_res = $mysqli->query("SELECT COUNT(*) AS cnt FROM fl_chat_messages WHERE chat_connection_id = '$conn_id' AND chat_user_id = '$chat_user_id' AND (is_read = 0 OR is_read IS NULL)");
+            $unread_count = 0;
+            if ($unread_res && $ur = $unread_res->fetch_assoc()) {
+                $unread_count = (int) $ur['cnt'];
+            }
             $connections[] = [
                 'id' => $row['id'],
                 'chat_user_one' => $row['chat_user_one'],
@@ -267,6 +326,8 @@ function getUserConnections($chat_user_id)
                 'user_two_id' => $u2 !== null ? (string) $u2 : null,
                 'other_user_id' => $other_user_id,
                 'other_user_type' => $other_user_type,
+                'other_user_name' => $other_user_name,
+                'unread_count' => $unread_count,
                 'created_at' => $row['created_at'],
                 'last_message' => $last_message,
                 'support_claimed_by_staff_id' => isset($row['support_claimed_by_staff_id']) ? $row['support_claimed_by_staff_id'] : null

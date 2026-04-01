@@ -154,7 +154,8 @@ class InboxProvider with ChangeNotifier {
             continue;
           }
 
-          // Fetch the other user's data from Firestore
+          // Fetch the other user's data from Firestore (or use API name for parents/guardians when Firestore uses uid not id)
+          final otherUserNameFromApi = conn['other_user_name']?.toString();
           UserModel? otherUser;
           try {
             final userDoc = await _firestore
@@ -163,6 +164,21 @@ class InboxProvider with ChangeNotifier {
                 .get();
             if (userDoc.exists) {
               otherUser = UserModel.fromFirestore(userDoc);
+              if (otherUser.fullName.isEmpty && otherUserNameFromApi != null && otherUserNameFromApi.isNotEmpty) {
+                otherUser = UserModel(
+                  uid: otherUser.uid,
+                  email: otherUser.email,
+                  displayName: otherUserNameFromApi,
+                  firstName: otherUser.firstName,
+                  lastName: otherUser.lastName,
+                  phoneNumber: otherUser.phoneNumber,
+                  photoUrl: otherUser.photoUrl,
+                  userType: otherUser.userType,
+                  createdAt: otherUser.createdAt,
+                  updatedAt: otherUser.updatedAt,
+                  additionalData: otherUser.additionalData,
+                );
+              }
               debugPrint(
                 'InboxProvider: Fetched user data for: ${otherUser.fullName}',
               );
@@ -170,10 +186,11 @@ class InboxProvider with ChangeNotifier {
               debugPrint(
                 'InboxProvider: User document not found for ID: $otherUserId',
               );
-              // Create a minimal user model if not found in Firestore
+              // Create a minimal user model; use API name (e.g. for parents where Firestore doc id is uid not parent id)
               otherUser = UserModel(
                 uid: otherUserId,
                 email: '',
+                displayName: otherUserNameFromApi?.isNotEmpty == true ? otherUserNameFromApi : null,
                 userType: InboxProvider._userTypeFromApiString(otherUserType),
               );
             }
@@ -182,22 +199,26 @@ class InboxProvider with ChangeNotifier {
             otherUser = UserModel(
               uid: otherUserId,
               email: '',
+              displayName: otherUserNameFromApi?.isNotEmpty == true ? otherUserNameFromApi : null,
               userType: InboxProvider._userTypeFromApiString(otherUserType),
             );
           }
+
+          // Unread count: messages not read by the current user (from API)
+          final unreadCountRaw = conn['unread_count'];
+          final unreadCount = unreadCountRaw is int
+              ? unreadCountRaw
+              : (int.tryParse(unreadCountRaw?.toString() ?? '0') ?? 0);
 
           // Parse last message
           final lastMessageData = conn['last_message'] as Map<String, dynamic>?;
           String? lastMessage;
           DateTime? lastMessageTime;
           String? lastMessageSenderId;
-          bool hasUnreadMessages = false;
 
           if (lastMessageData != null) {
             lastMessage = lastMessageData['message']?.toString();
             lastMessageSenderId = lastMessageData['sender_id']?.toString();
-            final isRead = lastMessageData['is_read'];
-            hasUnreadMessages = (isRead == 0 || isRead == false);
 
             // Parse timestamp (Unix timestamp in seconds)
             final time = lastMessageData['time'];
@@ -252,17 +273,19 @@ class InboxProvider with ChangeNotifier {
           }
 
           // Create ChatModel with current user as user1 and other user as user2
-          // The ChatModel.getOtherUser() method will handle finding the other user correctly
+          // Pass otherUserDisplayName from API so parents show name even when Firestore doc id differs (e.g. parent id vs uid)
           final chatModel = ChatModel(
             chatId: connectionId,
             user1Id: currentUserId ?? '',
             user2Id: otherUserId,
             user1: null, // Current user - not needed for display
             user2: otherUser, // Other user - needed for display
+            otherUserDisplayName: otherUserNameFromApi?.trim().isNotEmpty == true ? otherUserNameFromApi!.trim() : null,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             lastMessageSenderId: lastMessageSenderId,
-            hasUnreadMessages: hasUnreadMessages,
+            hasUnreadMessages: unreadCount > 0,
+            unreadCount: unreadCount,
             createdAt: createdAt,
           );
 

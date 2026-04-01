@@ -310,11 +310,11 @@ class FCMNotificationHelper {
         $senderId = $mysqli->real_escape_string((string) $senderId);
         $userTypeEsc = $mysqli->real_escape_string($userType);
         
-        // Admin/Support/Teacher: staff table. Student: users. Guardian/Parent: students.guardian_name or users.
+        // Admin/Support/Teacher: staff table. Student: users by user_id. Guardian/Parent: users by id.
         if (in_array($userTypeEsc, ['staff', 'teacher', 'admin'], true)) {
             $sql = "SELECT name FROM staff WHERE id = '$senderId' LIMIT 1";
         } elseif (in_array($userTypeEsc, ['guardian', 'parent'], true)) {
-            $sql = "SELECT guardian_name FROM students WHERE id = '$senderId' LIMIT 1";
+            $sql = "SELECT username FROM users WHERE id = '$senderId' LIMIT 1";
         } else {
             $sql = "SELECT username FROM users WHERE user_id = '$senderId' LIMIT 1";
         }
@@ -323,8 +323,8 @@ class FCMNotificationHelper {
         if ($result && $row = $result->fetch_assoc()) {
             if (in_array($userTypeEsc, ['staff', 'teacher', 'admin'], true)) {
                 $name = !empty($row['name']) ? $row['name'] : 'Someone';
-            } elseif (in_array($userTypeEsc, ['guardian', 'parent'], true) && isset($row['guardian_name'])) {
-                $name = !empty($row['guardian_name']) ? $row['guardian_name'] : 'Someone';
+            } elseif (in_array($userTypeEsc, ['guardian', 'parent'], true) && isset($row['username'])) {
+                $name = !empty($row['username']) ? $row['username'] : 'Someone';
             } else {
                 $name = !empty($row['username']) ? $row['username'] : 'Someone';
             }

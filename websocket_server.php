@@ -44,6 +44,8 @@ class ChatWebSocketServer implements MessageComponentInterface
     protected $fcmHelper; // FCM notification helper
     /** Path to file written by CodeIgniter when a new notice is added (trigger broadcast) */
     protected $pendingNoticeBroadcastPath;
+    /** Rate limit: last time we sent support-hours auto message per chat_connection_id (so we only send once per 60 minutes per chat) */
+    protected $supportAutoMessageLastSent = [];
 
     public function __construct()
     {
@@ -198,6 +200,17 @@ class ChatWebSocketServer implements MessageComponentInterface
                                     $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
                                 }
                             }
+                            if ($sender_display_name === null && $sender_id !== null) {
+                                // Always resolve sender name so the echo to sender shows their name in the bubble (e.g. admin in 1:1 chat)
+                                $ut = strtolower(trim((string) $user_type));
+                                if (in_array($ut, ['staff', 'admin', 'teacher'], true)) {
+                                    $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
+                                } elseif (in_array($ut, ['guardian', 'parent'], true)) {
+                                    $sender_display_name = $this->getGuardianDisplayName($mysqli, $sender_id);
+                                } else {
+                                    $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
+                                }
+                            }
                             if ($mysqli) {
                                 $mysqli->close();
                             }
@@ -254,9 +267,26 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 }
                             }
                             if (!$deliveredWs && $receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
-                                // Receiver is Support: broadcast to all staff (student or teacher may have sent). Skip sender so they don't get duplicate (they already have optimistic message).
+                                // Receiver is Support: broadcast to all staff (parent/student/teacher sent). Skip sender. Ensure sender_display_name so admin sees who sent.
                                 $staffPayload = $basePayload;
                                 $staffPayload['sender_id'] = (string) $sender_id;
+                                if ($sender_display_name === null && $sender_id !== null && $this->isStudentSideUserType($user_type)) {
+                                    $mysqli = $this->getDbConnection();
+                                    if ($mysqli) {
+                                        $ut = strtolower(trim((string) $user_type));
+                                        if ($ut === 'teacher') {
+                                            $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
+                                        } elseif (in_array($ut, ['guardian', 'parent'], true)) {
+                                            $sender_display_name = $this->getGuardianDisplayName($mysqli, $sender_id);
+                                        } else {
+                                            $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
+                                        }
+                                        $mysqli->close();
+                                    }
+                                }
+                                if ($sender_display_name !== null) {
+                                    $staffPayload['sender_display_name'] = $sender_display_name;
+                                }
                                 foreach ($this->staffConnections as $staffConn) {
                                     if ($staffConn === $from) {
                                         continue; // do not send to sender – avoid duplicate on their screen
@@ -346,6 +376,16 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 $messageSentPayload['actual_sender_staff_id'] = $actual_sender_staff_id;
                             }
                             $from->send(json_encode($messageSentPayload));
+
+                            // Automated reply when a non-admin sends to Support outside 9am–5pm (at most once per 60 minutes per chat)
+                            if ($connection_is_support && $this->isStudentSideUserType($user_type) && !$this->isWithinSupportHours()) {
+                                $this->maybeSendSupportHoursAutoReply(
+                                    $chat_connection_id,
+                                    $support_chat_user_id,
+                                    $effective_sender_chat_user_id,
+                                    $from
+                                );
+                            }
                         } else {
                             $from->send(json_encode([
                                 'action' => 'error',
@@ -396,7 +436,18 @@ class ChatWebSocketServer implements MessageComponentInterface
                 $reader_user_id = isset($from->user_id) ? $from->user_id : null;
                 $reader_user_type = isset($from->user_type) ? $from->user_type : 'staff';
                 if ($chat_connection_id && $reader_user_id !== null) {
-                    $this->markMessagesAsRead($chat_connection_id, $reader_user_id, $reader_user_type);
+                    // When admin views a Support thread, mark as read the messages received by Support (so inbox unread count updates)
+                    $support_chat_user_id = $this->getSupportChatUserId();
+                    $connection_is_support = $support_chat_user_id && $this->connectionContainsSupport($chat_connection_id, $support_chat_user_id);
+                    $reader_chat_user_id_for_update = null;
+                    if ($connection_is_support && $this->isStaffSideUserType($reader_user_type)) {
+                        $reader_chat_user_id_for_update = $support_chat_user_id;
+                    } else {
+                        $reader_chat_user_id_for_update = $this->getChatUserId($reader_user_id, $reader_user_type);
+                    }
+                    if ($reader_chat_user_id_for_update !== null) {
+                        $this->markMessagesAsReadByChatUserId($chat_connection_id, $reader_chat_user_id_for_update);
+                    }
                     $from->send(json_encode(['action' => 'messages_marked_read', 'chat_connection_id' => $chat_connection_id]));
 
                     // Notify the other party so their sent-message ticks update to "read" in real time
@@ -695,7 +746,7 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
-     * Guardian/parent display name (students.guardian_name; parent_id may reference students.id)
+     * Guardian/parent display name from users table (parents are in users; for parent we use users.id = parent_id).
      */
     private function getGuardianDisplayName($mysqli, $parent_id)
     {
@@ -703,9 +754,15 @@ class ChatWebSocketServer implements MessageComponentInterface
             return null;
         }
         $id = $mysqli->real_escape_string($parent_id);
-        $res = $mysqli->query("SELECT guardian_name FROM students WHERE id = '$id' LIMIT 1");
-        if ($res && $row = $res->fetch_assoc() && !empty(trim((string)($row['guardian_name'] ?? '')))) {
-            return trim($row['guardian_name']);
+        $res = $mysqli->query("SELECT username FROM users WHERE id = '$id' LIMIT 1");
+        if ($res) {
+            $row = $res->fetch_assoc();
+            if ($row) {
+                $username = trim((string) ($row['username'] ?? ''));
+                if ($username !== '') {
+                    return $username;
+                }
+            }
         }
         return null;
     }
@@ -803,6 +860,105 @@ class ChatWebSocketServer implements MessageComponentInterface
 
         $mysqli->close();
         return false;
+    }
+
+    /** Default automated message when someone messages Support outside 9am–5pm */
+    const SUPPORT_HOURS_AUTO_MESSAGE = 'Thank you for your message. Our support team is available between 9am and 5pm. We\'ll get back to you during business hours.';
+    /** Only send the auto message at most once per this many seconds per chat */
+    const SUPPORT_HOURS_AUTO_COOLDOWN_SECONDS = 3600; // 60 minutes
+    /** Timezone for 9am–5pm check (e.g. Europe/London, Asia/Karachi). Set to match your support team. */
+    const SUPPORT_HOURS_TIMEZONE = 'UTC';
+
+    /**
+     * Send the support-hours auto reply only if we haven't sent one for this chat in the last 60 minutes.
+     */
+    private function maybeSendSupportHoursAutoReply($chat_connection_id, $support_chat_user_id, $receiver_chat_user_id, $from)
+    {
+        $key = (string) $chat_connection_id;
+        $now = time();
+        if (isset($this->supportAutoMessageLastSent[$key])) {
+            $elapsed = $now - $this->supportAutoMessageLastSent[$key];
+            if ($elapsed < self::SUPPORT_HOURS_AUTO_COOLDOWN_SECONDS) {
+                echo "sendSupportHoursAutoReply: skip (cooldown, last sent " . $elapsed . "s ago for chat $chat_connection_id)\n";
+                return;
+            }
+        }
+        $this->sendSupportHoursAutoReply($chat_connection_id, $support_chat_user_id, $receiver_chat_user_id, $from);
+        $this->supportAutoMessageLastSent[$key] = $now;
+    }
+
+    /**
+     * Send an automated Support reply when a non-admin messaged outside support hours.
+     * Saves the message as from Support to the user and delivers it to the user + staff viewing the thread.
+     *
+     * @param string $chat_connection_id
+     * @param int|null $support_chat_user_id Support's fl_chat_users.id
+     * @param int|null $receiver_chat_user_id The user's fl_chat_users.id (they receive the auto-reply)
+     * @param \Ratchet\ConnectionInterface $from Connection of the user who sent the message (to send them the auto-reply)
+     */
+    private function sendSupportHoursAutoReply($chat_connection_id, $support_chat_user_id, $receiver_chat_user_id, $from)
+    {
+        if (!$receiver_chat_user_id) {
+            return;
+        }
+        $message_data = [
+            'chat_connection_id' => $chat_connection_id,
+            'chat_user_id' => $receiver_chat_user_id,
+            'message' => self::SUPPORT_HOURS_AUTO_MESSAGE,
+            'ip' => '127.0.0.1',
+            'time' => time(),
+            'message_type' => 'text',
+        ];
+        $auto_message_id = $this->saveMessage($message_data);
+        if (!$auto_message_id) {
+            echo "sendSupportHoursAutoReply: saveMessage failed\n";
+            return;
+        }
+        $payload = [
+            'action' => 'new_message',
+            'message_id' => $auto_message_id,
+            'chat_connection_id' => $chat_connection_id,
+            'chat_user_id' => $receiver_chat_user_id,
+            'message' => self::SUPPORT_HOURS_AUTO_MESSAGE,
+            'message_type' => 'text',
+            'sender_id' => (string) self::SUPPORT_STAFF_ID,
+            'created_at' => date('Y-m-d H:i:s'),
+            'sender_display_name' => 'Support',
+        ];
+        try {
+            $from->send(json_encode($payload));
+        } catch (\Exception $e) {
+            // ignore
+        }
+        foreach ($this->staffConnections as $staffConn) {
+            if ($staffConn === $from) {
+                continue;
+            }
+            if (isset($this->staffViewingChat[$staffConn]) && (string) $this->staffViewingChat[$staffConn] === (string) $chat_connection_id) {
+                try {
+                    $staffConn->send(json_encode($payload));
+                } catch (\Exception $e) {
+                    // ignore
+                }
+            }
+        }
+        echo "sendSupportHoursAutoReply: auto message $auto_message_id delivered\n";
+    }
+
+    /**
+     * Whether current time is within support hours (9am–5pm inclusive) in SUPPORT_HOURS_TIMEZONE.
+     * So 9:00am and 5:00pm (and anything between) are within; 5:01pm and 8:59am are outside.
+     */
+    private function isWithinSupportHours()
+    {
+        try {
+            $tz = new \DateTimeZone(self::SUPPORT_HOURS_TIMEZONE);
+        } catch (\Exception $e) {
+            $tz = new \DateTimeZone('UTC');
+        }
+        $now = new \DateTime('now', $tz);
+        $hour = (int) $now->format('G'); // 24-hour format, 0–23
+        return $hour >= 9 && $hour <= 17;
     }
 
     /**
@@ -1120,6 +1276,7 @@ class ChatWebSocketServer implements MessageComponentInterface
                        actual_staff.name as actual_sender_display_name,
                        s1.name as user_one_staff_name, s2.name as user_two_staff_name,
                        ts1.name as user_one_teacher_name, ts2.name as user_two_teacher_name,
+                       up1.username as user_one_parent_name, up2.username as user_two_parent_name,
                        st1.firstname as user_one_firstname, st1.lastname as user_one_lastname, st1.admission_no as user_one_admission_no,
                        st2.firstname as user_two_firstname, st2.lastname as user_two_lastname, st2.admission_no as user_two_admission_no
                 FROM fl_chat_messages m
@@ -1130,6 +1287,8 @@ class ChatWebSocketServer implements MessageComponentInterface
                 LEFT JOIN staff s2 ON s2.id = cu2.staff_id
                 LEFT JOIN staff ts1 ON ts1.id = cu1.teacher_id
                 LEFT JOIN staff ts2 ON ts2.id = cu2.teacher_id
+                LEFT JOIN users up1 ON up1.id = cu1.parent_id
+                LEFT JOIN users up2 ON up2.id = cu2.parent_id
                 LEFT JOIN users u1 ON u1.user_id = cu1.student_id
                 LEFT JOIN users u2 ON u2.user_id = cu2.student_id
                 LEFT JOIN students st1 ON st1.id = u1.user_id
@@ -1168,9 +1327,9 @@ class ChatWebSocketServer implements MessageComponentInterface
                 if ($actual_sender_staff_id !== null && !empty($row['actual_sender_display_name'])) {
                     $sender_display_name = $row['actual_sender_display_name'];
                 } elseif ($sender_chat_user_id == $chat_user_one_id) {
-                    $sender_display_name = !empty($row['user_one_staff_name']) ? $row['user_one_staff_name'] : (!empty($row['user_one_teacher_name']) ? $row['user_one_teacher_name'] : $this->formatStudentDisplayName($row['user_one_firstname'] ?? null, $row['user_one_lastname'] ?? null, $row['user_one_admission_no'] ?? null));
+                    $sender_display_name = !empty(trim((string)($row['user_one_staff_name'] ?? ''))) ? trim($row['user_one_staff_name']) : (!empty(trim((string)($row['user_one_teacher_name'] ?? ''))) ? trim($row['user_one_teacher_name']) : (!empty(trim((string)($row['user_one_parent_name'] ?? ''))) ? trim($row['user_one_parent_name']) : $this->formatStudentDisplayName($row['user_one_firstname'] ?? null, $row['user_one_lastname'] ?? null, $row['user_one_admission_no'] ?? null)));
                 } else {
-                    $sender_display_name = !empty($row['user_two_staff_name']) ? $row['user_two_staff_name'] : (!empty($row['user_two_teacher_name']) ? $row['user_two_teacher_name'] : $this->formatStudentDisplayName($row['user_two_firstname'] ?? null, $row['user_two_lastname'] ?? null, $row['user_two_admission_no'] ?? null));
+                    $sender_display_name = !empty(trim((string)($row['user_two_staff_name'] ?? ''))) ? trim($row['user_two_staff_name']) : (!empty(trim((string)($row['user_two_teacher_name'] ?? ''))) ? trim($row['user_two_teacher_name']) : (!empty(trim((string)($row['user_two_parent_name'] ?? ''))) ? trim($row['user_two_parent_name']) : $this->formatStudentDisplayName($row['user_two_firstname'] ?? null, $row['user_two_lastname'] ?? null, $row['user_two_admission_no'] ?? null)));
                 }
                 $message = [
                     'id' => $row['id'],
@@ -1196,23 +1355,30 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
-     * Mark messages in a chat as read (messages sent TO the current user in this connection)
+     * Mark messages in a chat as read (messages sent TO the given chat_user_id in this connection)
      */
-    private function markMessagesAsRead($chat_connection_id, $reader_user_id, $reader_user_type)
+    private function markMessagesAsReadByChatUserId($chat_connection_id, $reader_chat_user_id)
     {
         $mysqli = $this->getDbConnection();
         if (!$mysqli) {
             return;
         }
         $chat_connection_id = $mysqli->real_escape_string($chat_connection_id);
-        $reader_chat_user_id = $this->getChatUserId($reader_user_id, $reader_user_type);
-        if ($reader_chat_user_id === null) {
-            $mysqli->close();
-            return;
-        }
         $reader_chat_user_id = intval($reader_chat_user_id);
         $mysqli->query("UPDATE fl_chat_messages SET is_read = 1 WHERE chat_connection_id = '$chat_connection_id' AND chat_user_id = $reader_chat_user_id");
         $mysqli->close();
+    }
+
+    /**
+     * Mark messages in a chat as read (resolves reader chat_user_id from user_id and user_type)
+     */
+    private function markMessagesAsRead($chat_connection_id, $reader_user_id, $reader_user_type)
+    {
+        $reader_chat_user_id = $this->getChatUserId($reader_user_id, $reader_user_type);
+        if ($reader_chat_user_id === null) {
+            return;
+        }
+        $this->markMessagesAsReadByChatUserId($chat_connection_id, $reader_chat_user_id);
     }
 
     /**

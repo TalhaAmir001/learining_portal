@@ -379,6 +379,38 @@ class MessagesChatRepository {
     }
   }
 
+  /// Save support feedback (ticket) text for the current chat connection.
+  /// Feedback is stored against the admin (staff) who claimed this support connection.
+  static Future<Map<String, dynamic>> saveSupportFeedback({
+    required String connectionId,
+    required String feedbackText,
+  }) async {
+    try {
+      final response = await ApiClient.post(
+        endpoint: '/mobile_apis/save_support_feedback.php',
+        body: {
+          'connection_id': connectionId,
+          'feedback_text': feedbackText,
+        },
+      );
+      if (response['success'] == true) {
+        return {
+          'success': true,
+          'feedback_id': response['feedback_id'],
+          'message': response['message']?.toString(),
+        };
+      }
+      return {
+        'success': false,
+        'error': response['error']?.toString() ?? 'Failed to save support feedback',
+      };
+    } on ApiException catch (e) {
+      return {'success': false, 'error': e.message};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
   /// Save FCM token to database for a chat user
   ///
   /// [userId] - The user ID (staff_id or student_id)

@@ -5,13 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
-import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/providers/auth_provider.dart' show AuthProvider, UserType;
 import 'package:learining_portal/providers/messages/chat_provider.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/widgets/messages/chat_input_bar.dart';
 import 'package:learining_portal/utils/widgets/messages/message_bubble.dart';
+import 'package:learining_portal/utils/widgets/messages/ticket_floating_bar.dart';
 import 'package:provider/provider.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -374,6 +375,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     context,
                     listen: false,
                   );
+                  // Use same ID as backend/WebSocket: guardian = parent id (user.id), others = uid
+                  final currentUser = authProvider.currentUser;
+                  final myApiId = currentUser == null
+                      ? null
+                      : (currentUser.userType == UserType.guardian
+                          ? currentUser.id
+                          : currentUser.uid);
                   // Update notification service when chatId becomes available
                   if (chatProvider.chatId != null &&
                       chatProvider.chatId != _lastNotifiedChatId) {
@@ -489,10 +497,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   final chatId = chatProvider.chatId;
                   if (chatId != null) {
                     final hasUnread = chatProvider.messages.any((m) {
-                      final myId = authProvider.currentUser?.uid;
-                      final isIncoming = myId != null &&
-                          m.senderId != myId &&
-                          m.actualSenderId != myId;
+                      final isIncoming = myApiId != null &&
+                          m.senderId != myApiId &&
+                          m.actualSenderId != myApiId;
                       return isIncoming && !m.isRead;
                     });
                     if (hasUnread || chatId != _lastMarkedReadChatId) {
@@ -579,9 +586,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       final msgIndex = hasMore ? index - 1 : index;
                       final message = chatProvider.messages[msgIndex];
                       final bool isCurrentUser =
-                          message.senderId == authProvider.currentUser?.uid ||
-                          message.actualSenderId ==
-                              authProvider.currentUser?.uid;
+                          myApiId != null &&
+                          (message.senderId == myApiId ||
+                              message.actualSenderId == myApiId);
 
                       return MessageBubble(
                         message: message,
@@ -593,6 +600,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
+            const TicketFloatingBar(),
             ChatInputBar(scrollController: _scrollController),
           ],
         ),

@@ -10,6 +10,7 @@ import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/feedback/daily_feedback_screen.dart';
 import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
+import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:provider/provider.dart';
@@ -119,7 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       items.add(
         DashboardItem(
           icon: Icons.support_agent_rounded,
-          title: 'Support Chat',
+          title: 'Live Chat',
           color: AppColors.accentTeal,
           gradient: const LinearGradient(
             colors: [AppColors.accentTeal, AppColors.secondaryPurple],
@@ -155,39 +156,61 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
 
     // Daily Feedback: admin sees full screen, guardian sees feedback for their children
-    if (userType == UserType.admin) {
+    // if (userType == UserType.admin) {
+    //   items.add(
+    //     DashboardItem(
+    //       icon: Icons.feedback_rounded,
+    //       title: 'Daily Feedback',
+    //       color: AppColors.accentTeal,
+    //       gradient: const LinearGradient(
+    //         colors: [AppColors.accentTeal, AppColors.primaryBlue],
+    //       ),
+    //       onTap: () {
+    //         Navigator.push(
+    //           context,
+    //           MaterialPageRoute(
+    //             builder: (context) => const DailyFeedbackScreen(),
+    //           ),
+    //         );
+    //       },
+    //     ),
+    //   );
+    // } else if (userType == UserType.guardian) {
+    //   items.add(
+    //     DashboardItem(
+    //       icon: Icons.feedback_rounded,
+    //       title: 'Daily Feedback',
+    //       color: AppColors.accentTeal,
+    //       gradient: const LinearGradient(
+    //         colors: [AppColors.accentTeal, AppColors.primaryBlue],
+    //       ),
+    //       onTap: () {
+    //         Navigator.push(
+    //           context,
+    //           MaterialPageRoute(
+    //             builder: (context) => const GuardianDailyFeedbackScreen(),
+    //           ),
+    //         );
+    //       },
+    //     ),
+    //   );
+    // }
+
+    // Tickets: show for support users (teacher, student, guardian) and admin; only student/guardian/teacher can create (FAB hidden for admin)
+    if (isSupportUserType || userType == UserType.admin) {
       items.add(
         DashboardItem(
-          icon: Icons.feedback_rounded,
-          title: 'Daily Feedback',
-          color: AppColors.accentTeal,
+          icon: Icons.confirmation_number_rounded,
+          title: 'Support Tickets',
+          color: AppColors.secondaryPurple,
           gradient: const LinearGradient(
-            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+            colors: [AppColors.secondaryPurple, AppColors.accentTeal],
           ),
           onTap: () {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => const DailyFeedbackScreen(),
-              ),
-            );
-          },
-        ),
-      );
-    } else if (userType == UserType.guardian) {
-      items.add(
-        DashboardItem(
-          icon: Icons.feedback_rounded,
-          title: 'Daily Feedback',
-          color: AppColors.accentTeal,
-          gradient: const LinearGradient(
-            colors: [AppColors.accentTeal, AppColors.primaryBlue],
-          ),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const GuardianDailyFeedbackScreen(),
+                builder: (context) => const TicketsListScreen(),
               ),
             );
           },
@@ -196,32 +219,32 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
 
     // Add more dashboard items based on user type (admin only)
-    if (userType == UserType.admin) {
-      items.addAll([
-        DashboardItem(
-          icon: Icons.people_rounded,
-          title: 'Users',
-          color: AppColors.secondaryPurple,
-          gradient: const LinearGradient(
-            colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
-          ),
-          onTap: () {
-            // Navigate to user management
-          },
-        ),
-        DashboardItem(
-          icon: Icons.analytics_rounded,
-          title: 'Analytics',
-          color: AppColors.primaryBlue,
-          gradient: const LinearGradient(
-            colors: [AppColors.primaryBlue, AppColors.accentTeal],
-          ),
-          onTap: () {
-            // Navigate to analytics
-          },
-        ),
-      ]);
-    }
+    // if (userType == UserType.admin) {
+    //   items.addAll([
+    //     DashboardItem(
+    //       icon: Icons.people_rounded,
+    //       title: 'Users',
+    //       color: AppColors.secondaryPurple,
+    //       gradient: const LinearGradient(
+    //         colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
+    //       ),
+    //       onTap: () {
+    //         // Navigate to user management
+    //       },
+    //     ),
+    //     DashboardItem(
+    //       icon: Icons.analytics_rounded,
+    //       title: 'Analytics',
+    //       color: AppColors.primaryBlue,
+    //       gradient: const LinearGradient(
+    //         colors: [AppColors.primaryBlue, AppColors.accentTeal],
+    //       ),
+    //       onTap: () {
+    //         // Navigate to analytics
+    //       },
+    //     ),
+    //   ]);
+    // }
 
     return items;
   }
@@ -296,107 +319,107 @@ class _DashboardScreenState extends State<DashboardScreen>
                         child: FadeTransition(
                           opacity: _fadeAnimation,
                           child: SlideTransition(
-                          position: _slideAnimation,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              WelcomeSection(authProvider: authProvider),
-                              const SizedBox(height: 24),
+                            position: _slideAnimation,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                WelcomeSection(authProvider: authProvider),
+                                const SizedBox(height: 24),
 
-                              // Notice Board (unread only in box; View All shows full list)
-                              NoticeBoardBox(
-                                notices: sendNotifications.unreadNotices,
-                                isLoading: sendNotifications.isLoadingUnread,
-                                onViewAll: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const NoticeBoardScreen(),
-                                    ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 32),
-
-                              // Quick Actions Header
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    'Quick Actions',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .headlineSmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.accentTeal.withOpacity(
-                                        0.1,
+                                // Notice Board (unread only in box; View All shows full list)
+                                NoticeBoardBox(
+                                  notices: sendNotifications.unreadNotices,
+                                  isLoading: sendNotifications.isLoadingUnread,
+                                  onViewAll: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const NoticeBoardScreen(),
                                       ),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      '${dashboardItems.length} options',
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 32),
+
+                                // Quick Actions Header
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Quick Actions',
                                       style: Theme.of(context)
                                           .textTheme
-                                          .bodySmall
+                                          .headlineSmall
                                           ?.copyWith(
-                                            color: AppColors.accentTeal,
-                                            fontWeight: FontWeight.w600,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.textPrimary,
                                           ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-
-                              // Dashboard Grid
-                              GridView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: isTablet ? 4 : 2,
-                                      crossAxisSpacing: 16,
-                                      mainAxisSpacing: 16,
-                                      childAspectRatio: 1.0,
-                                    ),
-                                itemCount: dashboardItems.length,
-                                itemBuilder: (context, index) {
-                                  return DashboardGridItem(
-                                    item: dashboardItems[index],
-                                    index: index,
-                                  );
-                                },
-                              ),
-
-                              // Footer
-                              const SizedBox(height: 24),
-                              Center(
-                                child: Text(
-                                  '© 2026 GCSE with Rosi',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: AppColors.textSecondary
-                                            .withOpacity(0.5),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
                                       ),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.accentTeal.withOpacity(
+                                          0.1,
+                                        ),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: Text(
+                                        '${dashboardItems.length} options',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: AppColors.accentTeal,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 16),
+
+                                // Dashboard Grid
+                                GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: isTablet ? 4 : 2,
+                                        crossAxisSpacing: 16,
+                                        mainAxisSpacing: 16,
+                                        childAspectRatio: 1.0,
+                                      ),
+                                  itemCount: dashboardItems.length,
+                                  itemBuilder: (context, index) {
+                                    return DashboardGridItem(
+                                      item: dashboardItems[index],
+                                      index: index,
+                                    );
+                                  },
+                                ),
+
+                                // Footer
+                                const SizedBox(height: 24),
+                                Center(
+                                  child: Text(
+                                    '© 2026 GCSE with Rosi',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: AppColors.textSecondary
+                                              .withOpacity(0.5),
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
                     );
                   },
                 ),

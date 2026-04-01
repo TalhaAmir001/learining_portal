@@ -2,8 +2,21 @@
 reply
 active/inactive user
 
+The slider must ask if isseue is resolved and show a ticket dialog in case of negation. Also experience rating dialog is needed. 1 done
 
+make seperate portion for ticket submission done
 
+request delete account
+
+show "Admin" for every admin in the chat. Name only for admins
+
+remove good morining card
+
+unread messages in inbox screen done
+
+remove loading when new message.
+
+double notification fix
 
 
 CREATE TABLE `sections` (
@@ -131,4 +144,779 @@ CREATE TABLE `students` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 parents in this table have user_id 0 and childs has user_ids of students
+
+
+tickets submission tables:
+
+Table: support_tickets
+Browse Browse
+Structure Structure(current)
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+Table structure Table structure
+Relation view Relation view
+#	Name	Type	Collation	Attributes	Null	Default	Comments	Extra	Action
+	1	id Primary	bigint(20)		UNSIGNED	No	None		AUTO_INCREMENT	Change Change	Drop Drop
+	2	ticket_id Index	varchar(255)	utf8mb4_unicode_ci		No	None	e.g. TKT-20250310-0001		Change Change	Drop Drop
+	3	subject	varchar(255)	utf8mb4_unicode_ci		No	None			Change Change	Drop Drop
+	4	category	varchar(255)	utf8mb4_unicode_ci		Yes	NULL			Change Change	Drop Drop
+	5	status Index	varchar(255)	utf8mb4_unicode_ci		No	open	open, in_progress, pending, resolved, closed		Change Change	Drop Drop
+	6	priority	varchar(255)	utf8mb4_unicode_ci		Yes	NULL	low, medium, high		Change Change	Drop Drop
+	7	submitted_by_role Index	varchar(255)	utf8mb4_unicode_ci		No	None	student | parent		Change Change	Drop Drop
+	8	submitted_by_id Index	bigint(20)		UNSIGNED	No	None	user/student id from portal		Change Change	Drop Drop
+	9	related_student_id	bigint(20)		UNSIGNED	Yes	NULL			Change Change	Drop Drop
+	10	assigned_to Index	bigint(20)		UNSIGNED	Yes	NULL	staff.id		Change Change	Drop Drop
+	11	description	text	utf8mb4_unicode_ci		Yes	NULL			Change Change	Drop Drop
+	12	attachment	varchar(255)	utf8mb4_unicode_ci		Yes	NULL			Change Change	Drop Drop
+	13	first_reply_at	timestamp			Yes	NULL			Change Change	Drop Drop
+	14	resolved_at	timestamp			Yes	NULL			Change Change	Drop Drop
+	15	created_at	timestamp			Yes	NULL			Change Change	Drop Drop
+	16	updated_at	timestamp			Yes	NULL			Change Change	Drop Drop
+
+Table: support_ticket_categories
+Browse Browse
+Structure Structure(current)
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+Table structure Table structure
+Relation view Relation view
+#	Name	Type	Collation	Attributes	Null	Default	Comments	Extra	Action
+	1	id Primary	bigint(20)		UNSIGNED	No	None		AUTO_INCREMENT	Change Change	Drop Drop
+	2	name	varchar(255)	utf8mb4_unicode_ci		No	None			Change Change	Drop Drop
+	3	slug Index	varchar(255)	utf8mb4_unicode_ci		No	None			Change Change	Drop Drop
+	4	sort_order	smallint(5)		UNSIGNED	No	0			Change Change	Drop Drop
+	5	is_active	tinyint(1)			No	1			Change Change	Drop Drop
+	6	created_at	timestamp			Yes	NULL			Change Change	Drop Drop
+	7	updated_at	timestamp			Yes	NULL			Change Change	Drop Drop
+
+Table: support_ticket_notifications
+Browse Browse(current)
+Structure Structure
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+ Showing rows 0 - 24 (64 total, Query took 0.0003 seconds.)
+SELECT * FROM `support_ticket_notifications`
+ Profiling [ Edit inline ] [ Edit ] [ Explain SQL ] [ Create PHP code ] [ Refresh ]
+
+1
+|	 Show all	|			Number of rows:
+25
+Filter rows:
+Search this table
+Sort by key:
+None
+Full texts
+id
+support_ticket_id
+user_type
+student | parent | staff
+user_id
+notification_type
+new_reply | status_change
+read_at
+created_at
+updated_at
+
+Edit Edit
+Copy Copy
+Delete Delete
+1
+1
+student
+668
+new_reply
+2026-03-10 14:13:04
+2026-03-10 14:12:13
+2026-03-10 14:13:04
+
+Edit Edit
+Copy Copy
+Delete Delete
+2
+4
+student
+668
+status_change
+2026-03-11 10:55:32
+2026-03-11 10:27:56
+2026-03-11 10:55:32
+
+Edit Edit
+Copy Copy
+Delete Delete
+3
+3
+student
+668
+new_reply
+2026-03-11 13:31:58
+2026-03-11 10:42:14
+2026-03-11 13:31:58
+
+Edit Edit
+Copy Copy
+Delete Delete
+4
+4
+student
+668
+status_change
+2026-03-11 10:55:32
+2026-03-11 10:43:22
+2026-03-11 10:55:32
+
+Edit Edit
+Copy Copy
+Delete Delete
+5
+4
+student
+668
+new_reply
+2026-03-11 10:55:32
+2026-03-11 10:43:30
+2026-03-11 10:55:32
+
+Edit Edit
+Copy Copy
+Delete Delete
+6
+3
+student
+668
+status_change
+2026-03-11 13:31:58
+2026-03-11 10:43:40
+2026-03-11 13:31:58
+
+Edit Edit
+Copy Copy
+Delete Delete
+7
+2
+student
+668
+status_change
+2026-03-11 10:55:26
+2026-03-11 10:43:41
+2026-03-11 10:55:26
+
+Edit Edit
+Copy Copy
+Delete Delete
+8
+1
+student
+668
+status_change
+2026-03-11 13:52:13
+2026-03-11 10:43:43
+2026-03-11 13:52:13
+
+Edit Edit
+Copy Copy
+Delete Delete
+9
+4
+student
+668
+status_change
+2026-03-11 10:55:32
+2026-03-11 10:43:46
+2026-03-11 10:55:32
+
+Edit Edit
+Copy Copy
+Delete Delete
+10
+2
+student
+668
+new_reply
+2026-03-11 10:55:26
+2026-03-11 10:43:56
+2026-03-11 10:55:26
+
+Edit Edit
+Copy Copy
+Delete Delete
+11
+4
+student
+668
+new_reply
+2026-03-11 10:55:53
+2026-03-11 10:55:38
+2026-03-11 10:55:53
+
+Edit Edit
+Copy Copy
+Delete Delete
+12
+3
+student
+668
+new_reply
+2026-03-11 13:31:58
+2026-03-11 12:56:35
+2026-03-11 13:31:58
+
+Edit Edit
+Copy Copy
+Delete Delete
+13
+1
+staff
+29
+status_change
+NULL
+2026-03-11 13:02:28
+2026-03-11 13:02:28
+
+Edit Edit
+Copy Copy
+Delete Delete
+14
+1
+student
+668
+new_reply
+2026-03-11 13:52:13
+2026-03-11 13:06:47
+2026-03-11 13:52:13
+
+Edit Edit
+Copy Copy
+Delete Delete
+15
+1
+student
+668
+new_reply
+2026-03-11 13:52:13
+2026-03-11 13:24:28
+2026-03-11 13:52:13
+
+Edit Edit
+Copy Copy
+Delete Delete
+16
+4
+student
+668
+new_reply
+2026-03-11 13:27:07
+2026-03-11 13:26:41
+2026-03-11 13:27:07
+
+Edit Edit
+Copy Copy
+Delete Delete
+17
+4
+student
+668
+status_change
+2026-03-11 15:23:22
+2026-03-11 13:27:16
+2026-03-11 15:23:22
+
+Edit Edit
+Copy Copy
+Delete Delete
+18
+4
+student
+668
+status_change
+2026-03-11 15:23:22
+2026-03-11 14:04:31
+2026-03-11 15:23:22
+
+Edit Edit
+Copy Copy
+Delete Delete
+19
+4
+student
+668
+status_change
+2026-03-11 15:23:22
+2026-03-11 14:04:35
+2026-03-11 15:23:22
+
+Edit Edit
+Copy Copy
+Delete Delete
+20
+5
+staff
+31
+status_change
+NULL
+2026-03-11 14:13:32
+2026-03-11 14:13:32
+
+Edit Edit
+Copy Copy
+Delete Delete
+21
+5
+staff
+10
+status_change
+NULL
+2026-03-11 14:14:16
+2026-03-11 14:14:16
+
+Edit Edit
+Copy Copy
+Delete Delete
+22
+6
+student
+668
+new_reply
+2026-03-11 15:50:25
+2026-03-11 15:50:11
+2026-03-11 15:50:25
+
+Edit Edit
+Copy Copy
+Delete Delete
+23
+6
+student
+668
+status_change
+2026-03-11 15:53:45
+2026-03-11 15:52:02
+2026-03-11 15:53:45
+
+Edit Edit
+Copy Copy
+Delete Delete
+24
+6
+student
+668
+status_change
+2026-03-11 15:53:45
+2026-03-11 15:52:08
+2026-03-11 15:53:45
+
+Edit Edit
+Copy Copy
+Delete Delete
+25
+6
+student
+668
+status_change
+2026-03-11 15:53:45
+2026-03-11 15:52:11
+2026-03-11 15:53:45
+
+Table: support_ticket_reads
+Browse Browse
+Structure Structure(current)
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+Table structure Table structure
+Relation view Relation view
+#	Name	Type	Collation	Attributes	Null	Default	Comments	Extra	Action
+	1	id Primary	bigint(20)		UNSIGNED	No	None		AUTO_INCREMENT	Change Change	Drop Drop
+	2	support_ticket_id Index	bigint(20)		UNSIGNED	No	None			Change Change	Drop Drop
+	3	staff_id Index	bigint(20)		UNSIGNED	No	None			Change Change	Drop Drop
+	4	last_read_at	timestamp			No	None			Change Change	Drop Drop
+	5	created_at	timestamp			Yes	NULL			Change Change	Drop Drop
+	6	updated_at	timestamp			Yes	NULL			Change Change	Drop Drop
+
+Table: support_ticket_replies
+Browse Browse(current)
+Structure Structure
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+ Showing rows 0 - 24 (30 total, Query took 0.0002 seconds.)
+SELECT * FROM `support_ticket_replies`
+ Profiling [ Edit inline ] [ Edit ] [ Explain SQL ] [ Create PHP code ] [ Refresh ]
+
+1
+|	 Show all	|			Number of rows:
+25
+Filter rows:
+Search this table
+Sort by key:
+None
+Full texts
+id
+support_ticket_id
+reply_by
+student | parent | staff
+reply_by_id
+message
+attachment
+created_at
+updated_at
+
+Edit Edit
+Copy Copy
+Delete Delete
+1
+1
+staff
+10
+Its siolved
+NULL
+2026-03-10 14:12:13
+2026-03-10 14:12:13
+
+Edit Edit
+Copy Copy
+Delete Delete
+2
+3
+staff
+10
+Hi
+NULL
+2026-03-11 10:42:14
+2026-03-11 10:42:14
+
+Edit Edit
+Copy Copy
+Delete Delete
+3
+2
+student
+668
+Hey
+NULL
+2026-03-11 10:42:45
+2026-03-11 10:42:45
+
+Edit Edit
+Copy Copy
+Delete Delete
+4
+4
+staff
+10
+Hi
+NULL
+2026-03-11 10:43:30
+2026-03-11 10:43:30
+
+Edit Edit
+Copy Copy
+Delete Delete
+5
+2
+staff
+10
+Hey how are you?
+NULL
+2026-03-11 10:43:56
+2026-03-11 10:43:56
+
+Edit Edit
+Copy Copy
+Delete Delete
+6
+4
+staff
+10
+How are you?
+NULL
+2026-03-11 10:55:38
+2026-03-11 10:55:38
+
+Edit Edit
+Copy Copy
+Delete Delete
+7
+4
+student
+668
+Hey whatsup?
+NULL
+2026-03-11 10:56:25
+2026-03-11 10:56:25
+
+Edit Edit
+Copy Copy
+Delete Delete
+8
+3
+staff
+10
+hey
+NULL
+2026-03-11 12:56:35
+2026-03-11 12:56:35
+
+Edit Edit
+Copy Copy
+Delete Delete
+9
+4
+student
+668
+Hey
+NULL
+2026-03-11 12:57:33
+2026-03-11 12:57:33
+
+Edit Edit
+Copy Copy
+Delete Delete
+10
+4
+student
+668
+What are you doing?
+NULL
+2026-03-11 12:59:13
+2026-03-11 12:59:13
+
+Edit Edit
+Copy Copy
+Delete Delete
+11
+4
+student
+668
+Hey
+NULL
+2026-03-11 13:04:20
+2026-03-11 13:04:20
+
+Edit Edit
+Copy Copy
+Delete Delete
+12
+1
+staff
+10
+Hey
+NULL
+2026-03-11 13:06:47
+2026-03-11 13:06:47
+
+Edit Edit
+Copy Copy
+Delete Delete
+13
+1
+staff
+10
+Hi
+NULL
+2026-03-11 13:24:28
+2026-03-11 13:24:28
+
+Edit Edit
+Copy Copy
+Delete Delete
+14
+4
+staff
+10
+whatsup?
+NULL
+2026-03-11 13:26:41
+2026-03-11 13:26:41
+
+Edit Edit
+Copy Copy
+Delete Delete
+15
+5
+student
+668
+hi
+support-attachments/zmgLcimUogGwo9fWCxI6N9t3UdxVh0...
+2026-03-11 13:46:02
+2026-03-11 13:46:02
+
+Edit Edit
+Copy Copy
+Delete Delete
+16
+1
+student
+668
+check
+support-attachments/ybIh3bw6RVq14NcecjCDcvee6fbNVC...
+2026-03-11 13:52:33
+2026-03-11 13:52:33
+
+Edit Edit
+Copy Copy
+Delete Delete
+17
+5
+student
+668
+Solved?
+NULL
+2026-03-11 14:14:41
+2026-03-11 14:14:41
+
+Edit Edit
+Copy Copy
+Delete Delete
+18
+5
+student
+668
+check
+NULL
+2026-03-11 14:17:11
+2026-03-11 14:17:11
+
+Edit Edit
+Copy Copy
+Delete Delete
+19
+5
+student
+668
+cjeck
+NULL
+2026-03-11 14:22:07
+2026-03-11 14:22:07
+
+Edit Edit
+Copy Copy
+Delete Delete
+20
+5
+student
+668
+check
+NULL
+2026-03-11 14:26:16
+2026-03-11 14:26:16
+
+Edit Edit
+Copy Copy
+Delete Delete
+21
+5
+student
+668
+again
+NULL
+2026-03-11 14:27:00
+2026-03-11 14:27:00
+
+Edit Edit
+Copy Copy
+Delete Delete
+22
+6
+staff
+10
+How can i help you?
+NULL
+2026-03-11 15:50:11
+2026-03-11 15:50:11
+
+Edit Edit
+Copy Copy
+Delete Delete
+23
+6
+student
+668
+please solve my issue
+NULL
+2026-03-11 15:50:43
+2026-03-11 15:50:43
+
+Edit Edit
+Copy Copy
+Delete Delete
+24
+2
+student
+668
+hey
+NULL
 

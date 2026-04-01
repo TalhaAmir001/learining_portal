@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:learining_portal/models/chat_model.dart';
-import 'package:learining_portal/screens/messages/chat.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/providers/messages/inbox_provider.dart';
+import 'package:learining_portal/screens/messages/chat.dart';
 import 'package:provider/provider.dart';
 
 class ChatListItem extends StatelessWidget {
@@ -53,6 +54,9 @@ class ChatListItem extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // Use API display name when UserModel has no name (e.g. parents where Firestore doc id is uid not parent id)
+    final displayName = chat.getOtherUserDisplayName(currentUserId!);
+
     // Compare with API user ID (uid) since lastMessageSenderId from API is the API user ID
     final currentApiUserId = authProvider.currentUser?.uid;
     final isLastMessageFromCurrentUser =
@@ -61,59 +65,43 @@ class ChatListItem extends StatelessWidget {
     final lastMessagePreview = chat.lastMessage ?? 'No messages yet';
 
     return InkWell(
-      onTap: () {
-        Navigator.push(
+      onTap: () async {
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) =>
                 ChatScreenWrapper(otherUser: otherUser, chatId: chat.chatId),
           ),
         );
+        if (context.mounted) {
+          context.read<InboxProvider>().refreshChats();
+        }
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
             // Avatar
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: Theme.of(
-                    context,
-                  ).colorScheme.primaryContainer,
-                  backgroundImage:
-                      otherUser.photoUrl != null &&
-                          otherUser.photoUrl!.isNotEmpty
-                      ? NetworkImage(otherUser.photoUrl!)
-                      : null,
-                  child:
-                      otherUser.photoUrl == null || otherUser.photoUrl!.isEmpty
-                      ? Icon(
-                          Icons.person,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onPrimaryContainer,
-                          size: 28,
-                        )
-                      : null,
-                ),
-                // Unread indicator
-                if (chat.hasUnreadMessages)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                    ),
-                  ),
-              ],
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.primaryContainer,
+              backgroundImage:
+                  otherUser.photoUrl != null &&
+                      otherUser.photoUrl!.isNotEmpty
+                  ? NetworkImage(otherUser.photoUrl!)
+                  : null,
+              child:
+                  otherUser.photoUrl == null || otherUser.photoUrl!.isEmpty
+                  ? Icon(
+                      Icons.person,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onPrimaryContainer,
+                      size: 28,
+                    )
+                  : null,
             ),
             const SizedBox(width: 16),
 
@@ -127,7 +115,7 @@ class ChatListItem extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          otherUser.fullName,
+                          displayName,
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: chat.hasUnreadMessages
@@ -182,6 +170,27 @@ class ChatListItem extends StatelessWidget {
                 ],
               ),
             ),
+
+            // Unread count badge on the right end (WhatsApp-style)
+            if (chat.unreadCount > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                constraints: const BoxConstraints(minWidth: 22),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  chat.unreadCount > 99 ? '99+' : '${chat.unreadCount}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
