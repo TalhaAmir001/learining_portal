@@ -48,6 +48,13 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _lastMarkedReadChatId;
   bool _hasScrolledToBottomOnLoad = false;
   int _previousMessageCount = 0;
+  AuthProvider? _authForWsReconnect;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _authForWsReconnect ??= Provider.of<AuthProvider>(context, listen: false);
+  }
 
   @override
   void dispose() {
@@ -57,7 +64,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _messageController.dispose();
     _scrollController.dispose();
+    final auth = _authForWsReconnect;
     super.dispose();
+    // ChatProvider closes its WebSocket after this; then re-register Auth's listener
+    // so inbox local notifications work again (server keeps one connection per user_id).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      auth?.reconnectWebSocketAfterChatClosed();
+    });
   }
 
   @override

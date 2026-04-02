@@ -113,10 +113,10 @@ class FCMNotificationHelper {
         $db_config = $db['default'];
         
         $mysqli = new mysqli(
-            'localhost',
-            'portal_beta',
-            'X7&?C%Yx5[L-QyiL',
-            'portal_beta'
+            $db_config['hostname'],
+            $db_config['username'],
+            $db_config['password'],
+            $db_config['database']
         );
         
         if ($mysqli->connect_error) {
@@ -237,94 +237,102 @@ class FCMNotificationHelper {
     }
     
     /**
-     * Get FCM token for a chat user by app UID (staff_id, teacher_id, student_id, or parent_id) and user_type.
-     * Use this for chat message notifications so the correct receiver device gets the notification.
+     * Get FCM token for a user from fl_chat_users.
+     * Tokens are saved per row (save_fcm_token.php updates by fl_chat_users.id); prefer $chatUserRowId when available.
      *
-     * @param string|int $userId   App user id (staff_id, teacher_id, student_id, or parent_id)
-     * @param string     $userType One of: admin, staff, teacher, student, guardian, parent
-     * @return string|null FCM token or null
+     * @param string|int      $userId          staff_id, student_id (users.user_id), teacher_id, or parent_id (users.id)
+     * @param string          $userType        staff|admin|student|guardian|parent|teacher
+     * @param string|int|null $chatUserRowId   fl_chat_users.id for the receiver (most reliable)
      */
-    public function getFCMTokenForChatUserId($userId, $userType = 'staff') {
-        if ($userId === null || $userId === '') {
+    public function getFCMTokenForUser($userId, $userType = 'staff', $chatUserRowId = null) {
+        $mysqli = $this->getDbConnection();
+        if (!$mysqli) {
             return null;
         }
-        return $this->getFCMTokenForUser($userId, $userType);
-    }
 
-    /**
-     * Which fl_chat_users column holds the user id for this user_type.
-     */
-    private function getIdColumnForUserType($userType) {
-        $t = strtolower(trim((string) $userType));
-        if (in_array($t, ['staff', 'admin'], true)) return 'staff_id';
-        if ($t === 'teacher') return 'teacher_id';
-        if (in_array($t, ['guardian', 'parent'], true)) return 'parent_id';
-        return 'student_id';
-    }
-
-    /**
-     * Get FCM token for a user by the correct ID column (with fallback for teacher when stored as staff_id).
-     * admin/staff → staff_id; teacher → teacher_id (fallback: staff_id + user_type=teacher); student → student_id; guardian/parent → parent_id.
-     */
-    public function getFCMTokenForUser($userId, $userType = 'staff') {
-        $mysqli = $this->getDbConnection();
-        if (!$mysqli) return null;
-        $userId = $mysqli->real_escape_string((string) $userId);
-        $userType = strtolower(trim($mysqli->real_escape_string($userType)));
-        $col = $this->getIdColumnForUserType($userType);
-        $sql = "SELECT fcm_token FROM fl_chat_users WHERE $col = '$userId' AND fcm_token IS NOT NULL AND fcm_token != '' LIMIT 1";
-        $result = $mysqli->query($sql);
-        if ($result && ($row = $result->fetch_assoc()) && !empty($row['fcm_token'])) {
-            $mysqli->close();
-            return $row['fcm_token'];
+        $userTypeNorm = strtolower(trim((string) $userType));
+        if ($userTypeNorm === 'parent') {
+            $userTypeNorm = 'guardian';
         }
-        // Fallback for teacher: many setups store teacher with staff_id and user_type='teacher' (same id as staff.id)
-        if ($userType === 'teacher') {
-            $sql = "SELECT fcm_token FROM fl_chat_users WHERE staff_id = '$userId' AND LOWER(TRIM(COALESCE(user_type,''))) = 'teacher' AND fcm_token IS NOT NULL AND fcm_token != '' LIMIT 1";
+
+        // Direct row lookup (matches how the app saves the token after login)
+        if ($chatUserRowId !== null && $chatUserRowId !== '') {
+            $rid = $mysqli->real_escape_string((string) $chatUserRowId);
+            $sql = "SELECT fcm_token FROM fl_chat_users WHERE id = '$rid' LIMIT 1";
             $result = $mysqli->query($sql);
-            if ($result && ($row = $result->fetch_assoc()) && !empty($row['fcm_token'])) {
-                $mysqli->close();
-                return $row['fcm_token'];
+            if ($result && $row = $result->fetch_assoc()) {
+                $token = $row['fcm_token'];
+                if (!empty($token)) {
+                    $mysqli->close();
+                    return $token;
+                }
             }
         }
+
+        $userId = $mysqli->real_escape_string((string) $userId);
+
+        $sql = "SELECT fcm_token FROM fl_chat_users WHERE ";
+        if ($userTypeNorm === 'staff' || $userTypeNorm === 'admin') {
+            $sql .= "staff_id = '$userId' AND user_type IN ('staff', 'admin')";
+        } elseif ($userTypeNorm === 'guardian') {
+            $sql .= "parent_id = '$userId' AND user_type IN ('guardian', 'parent')";
+        } elseif ($userTypeNorm === 'teacher') {
+            $sql .= "teacher_id = '$userId' AND user_type = 'teacher'";
+        } else {
+            $sql .= "student_id = '$userId' AND user_type = 'student'";
+        }
+        $sql .= " LIMIT 1";
+
+        $result = $mysqli->query($sql);
+        if ($result && $row = $result->fetch_assoc()) {
+            $token = $row['fcm_token'];
+            $mysqli->close();
+            return !empty($token) ? $token : null;
+        }
+
         $mysqli->close();
         return null;
     }
     
     /**
      * Get sender name for notification.
-     * Staff: staff table, column name. Students: users table, column username.
-     * Support (staff_id 0): returns "Support". Normalizes user_type to lowercase.
+     * Admins: staff table, column name. Students: users table, column username.
      */
     public function getSenderName($senderId, $userType = 'staff') {
-        $userType = strtolower(trim((string) $userType));
-        // Support (virtual user) – staff_id 0
-        if ($userType === 'staff' && ((string) $senderId === '0' || (int) $senderId === 0)) {
-            return 'Support';
-        }
         $mysqli = $this->getDbConnection();
         if (!$mysqli) {
             return 'Someone';
         }
-        
+
+        $userTypeNorm = strtolower(trim((string) $userType));
+        if ($userTypeNorm === 'parent') {
+            $userTypeNorm = 'guardian';
+        }
+
+        // Virtual Support user (staff_id = 0 in app / websocket)
+        if ((string) $senderId === '0' && ($userTypeNorm === 'staff' || $userTypeNorm === 'admin')) {
+            $mysqli->close();
+            return 'Support';
+        }
+
         $senderId = $mysqli->real_escape_string((string) $senderId);
-        $userTypeEsc = $mysqli->real_escape_string($userType);
-        
-        // Admin/Support/Teacher: staff table. Student: users by user_id. Guardian/Parent: users by id.
-        if (in_array($userTypeEsc, ['staff', 'teacher', 'admin'], true)) {
+        $userType = $mysqli->real_escape_string($userTypeNorm);
+
+        if ($userType == 'staff' || $userType == 'admin') {
             $sql = "SELECT name FROM staff WHERE id = '$senderId' LIMIT 1";
-        } elseif (in_array($userTypeEsc, ['guardian', 'parent'], true)) {
+        } elseif ($userType == 'guardian') {
             $sql = "SELECT username FROM users WHERE id = '$senderId' LIMIT 1";
+        } elseif ($userType == 'teacher') {
+            $sql = "SELECT name FROM staff WHERE id = '$senderId' LIMIT 1";
         } else {
+            // Students: fl_chat_users.student_id = users.user_id
             $sql = "SELECT username FROM users WHERE user_id = '$senderId' LIMIT 1";
         }
         
         $result = $mysqli->query($sql);
         if ($result && $row = $result->fetch_assoc()) {
-            if (in_array($userTypeEsc, ['staff', 'teacher', 'admin'], true)) {
+            if ($userType == 'staff' || $userType == 'admin' || $userType == 'teacher') {
                 $name = !empty($row['name']) ? $row['name'] : 'Someone';
-            } elseif (in_array($userTypeEsc, ['guardian', 'parent'], true) && isset($row['username'])) {
-                $name = !empty($row['username']) ? $row['username'] : 'Someone';
             } else {
                 $name = !empty($row['username']) ? $row['username'] : 'Someone';
             }
@@ -484,23 +492,40 @@ class FCMNotificationHelper {
      * @param int|null $sessionId
      * @return array ['student' => string[], 'staff' => string[], 'parent' => string[]] (only requested roles have non-empty arrays)
      */
-    public function getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId = null, $sectionId = null, $sessionId = null) {
+    public function getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId = null, $sectionId = null, $sessionId = null, $sectionIdsCsv = null) {
         $mysqli = $this->getDbConnection();
         $byRole = ['student' => [], 'staff' => [], 'parent' => []];
         if (!$mysqli) {
             return $byRole;
         }
 
-        $filterByClassSection = ($classId !== null && $sectionId !== null && $sessionId !== null);
+        $multiSectionIds = array();
+        if ($sectionIdsCsv !== null && trim((string) $sectionIdsCsv) !== '') {
+            foreach (explode(',', $sectionIdsCsv) as $p) {
+                $i = (int) trim($p);
+                if ($i > 0) {
+                    $multiSectionIds[] = $i;
+                }
+            }
+            $multiSectionIds = array_values(array_unique($multiSectionIds));
+        }
+        $filterByClassSection = ($classId !== null && $sessionId !== null && (!empty($multiSectionIds) || ($sectionId !== null && (int) $sectionId > 0)));
 
         if ($visibleStudent) {
             if ($filterByClassSection) {
                 $classId = (int) $classId;
-                $sectionId = (int) $sectionId;
                 $sessionId = $mysqli->real_escape_string($sessionId);
-                $sql = "SELECT DISTINCT f.fcm_token FROM fl_chat_users f
+                if (!empty($multiSectionIds)) {
+                    $inList = implode(',', array_map('intval', $multiSectionIds));
+                    $sql = "SELECT DISTINCT f.fcm_token FROM fl_chat_users f
+                    INNER JOIN student_session ss ON ss.student_id = f.student_id  AND ss.class_id = " . $classId . " AND ss.section_id IN (" . $inList . ") AND ss.session_id = " . $sessionId . "
+                    WHERE f.user_type = 'student' AND f.student_id IS NOT NULL AND f.student_id != 0 AND f.fcm_token IS NOT NULL AND f.fcm_token != ''";
+                } else {
+                    $sectionId = (int) $sectionId;
+                    $sql = "SELECT DISTINCT f.fcm_token FROM fl_chat_users f
                     INNER JOIN student_session ss ON ss.student_id = f.student_id  AND ss.class_id = " . $classId . " AND ss.section_id = " . $sectionId . " AND ss.session_id = " . $sessionId . "
                     WHERE f.user_type = 'student' AND f.student_id IS NOT NULL AND f.student_id != 0 AND f.fcm_token IS NOT NULL AND f.fcm_token != ''";
+                }
                     // $sql = "SELECT DISTINCT f.fcm_token FROM fl_chat_users f
                     // INNER JOIN student_session ss ON ss.student_id = f.student_id  AND ss.class_id = '18' AND ss.section_id = '31' AND ss.session_id = '21'
                     // WHERE f.user_type = 'student' AND f.student_id IS NOT NULL AND f.student_id != 0 AND f.fcm_token IS NOT NULL AND f.fcm_token != ''";
@@ -518,7 +543,7 @@ class FCMNotificationHelper {
         }
 
         if ($visibleStaff) {
-            $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != ''";
+            $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE user_type = 'staff' AND staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != ''";
             $result = $mysqli->query($sql);
             if ($result) {
                 while ($row = $result->fetch_assoc()) {
@@ -532,11 +557,18 @@ class FCMNotificationHelper {
         if ($visibleParent) {
             if ($filterByClassSection) {
                 $classId = (int) $classId;
-                $sectionId = (int) $sectionId;
                 $sessionId = $mysqli->real_escape_string($sessionId);
-                $sql = "SELECT DISTINCT s.parent_app_key AS fcm_token FROM students s
+                if (!empty($multiSectionIds)) {
+                    $inList = implode(',', array_map('intval', $multiSectionIds));
+                    $sql = "SELECT DISTINCT s.parent_app_key AS fcm_token FROM students s
+                    INNER JOIN student_session ss ON ss.student_id = s.id AND ss.class_id = " . $classId . " AND ss.section_id IN (" . $inList . ") AND ss.session_id = " . $sessionId . "
+                    WHERE s.parent_app_key IS NOT NULL AND TRIM(s.parent_app_key) != ''";
+                } else {
+                    $sectionId = (int) $sectionId;
+                    $sql = "SELECT DISTINCT s.parent_app_key AS fcm_token FROM students s
                     INNER JOIN student_session ss ON ss.student_id = s.id AND ss.class_id = " . $classId . " AND ss.section_id = " . $sectionId . "
                     WHERE s.parent_app_key IS NOT NULL AND TRIM(s.parent_app_key) != ''";
+                }
             } else {
                 $sql = "SELECT DISTINCT parent_app_key AS fcm_token FROM students WHERE parent_app_key IS NOT NULL AND TRIM(parent_app_key) != ''";
             }
@@ -588,8 +620,8 @@ class FCMNotificationHelper {
      * @param int|null $sessionId
      * @return array ['success' => bool, 'sent' => int, 'by_role' => ['student' => int, 'staff' => int, 'parent' => int]]
      */
-    public function sendNoticeToVisibleRoles($visibleStudent, $visibleStaff, $visibleParent, $title, $body, $notificationId = null, $classId = null, $sectionId = null, $sessionId = null) {
-        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId, $sectionId, $sessionId);
+    public function sendNoticeToVisibleRoles($visibleStudent, $visibleStaff, $visibleParent, $title, $body, $notificationId = null, $classId = null, $sectionId = null, $sessionId = null, $sectionIdsCsv = null) {
+        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId, $sectionId, $sessionId, $sectionIdsCsv);
         // Data-only message: app background handler shows one notification with title "Notice" and body = notice title (no duplicate system notification)
         $data = [
             'type' => 'notice',
@@ -618,50 +650,16 @@ class FCMNotificationHelper {
     }
 
     /**
-     * Get FCM tokens for all admins (Support inbox notifications).
-     * Only rows with staff_id set and not 0 (teachers use teacher_id, so they are not included).
+     * Get FCM tokens for all staff (excluding Support staff_id=0) for Support inbox notifications
      */
     public function getFCMTokensForAllStaff() {
-        return $this->getFCMTokensForAllStaffExcludingSender(null, null, null);
-    }
-
-    /**
-     * Get FCM tokens for all admins (Support inbox), excluding the sender so they never get their own message.
-     * - When sender is admin/staff: exclude row where staff_id = senderId.
-     * - When sender is teacher: exclude row where teacher_id = senderId OR (staff_id = senderId AND user_type = 'teacher') so the teacher never gets the FCM even if their row has wrong user_type.
-     * Includes user_type IN ('admin','staff') OR user_type IS NULL so legacy admin rows get FCM.
-     *
-     * @param string|int|null $excludeSenderId sender's API id (staff_id or teacher_id)
-     * @param string|null $excludeSenderUserType 'admin','staff','teacher', etc.
-     * @param string|int|null $excludeSenderChatUserId fl_chat_users.id of the sender – when set, exclude this row by id so sender never gets FCM
-     */
-    public function getFCMTokensForAllStaffExcludingSender($excludeSenderId, $excludeSenderUserType = null, $excludeSenderChatUserId = null) {
         $mysqli = $this->getDbConnection();
         if (!$mysqli) {
             return [];
         }
-        $sid = ($excludeSenderId !== null && $excludeSenderId !== '') ? $mysqli->real_escape_string((string) $excludeSenderId) : null;
-        $senderType = $excludeSenderUserType !== null ? strtolower(trim((string) $excludeSenderUserType)) : null;
-
-        // Recipients: admins only (staff_id != 0). user_type admin/staff or legacy NULL/empty.
-        // Do not filter by teacher_id so admins who are also teachers (same row with staff_id + teacher_id) still get Support FCM.
         $sql = "SELECT fcm_token FROM fl_chat_users 
-                WHERE staff_id IS NOT NULL AND staff_id != 0 
-                AND (LOWER(TRIM(COALESCE(user_type,''))) IN ('admin', 'staff') OR user_type IS NULL OR TRIM(COALESCE(user_type,'')) = '')
+                WHERE user_type IN ('staff', 'admin') AND staff_id IS NOT NULL AND staff_id != 0 
                 AND fcm_token IS NOT NULL AND fcm_token != ''";
-
-        // Exclude sender row by id when provided (so sender never gets their own message)
-        if ($excludeSenderChatUserId !== null && $excludeSenderChatUserId !== '') {
-            $eid = $mysqli->real_escape_string((string) $excludeSenderChatUserId);
-            $sql .= " AND id != '$eid'";
-        }
-        if ($sid !== null) {
-            if (in_array($senderType, ['admin', 'staff'], true)) {
-                $sql .= " AND staff_id != '$sid'";
-            }
-            // When sender is teacher: do NOT exclude by staff_id (same person may be admin with that staff_id; we exclude teacher row by id/token only)
-        }
-
         $result = $mysqli->query($sql);
         $tokens = [];
         if ($result) {
@@ -672,31 +670,16 @@ class FCMNotificationHelper {
             }
         }
         $mysqli->close();
-
-        // Exclude sender's FCM token so they never get their own Support message (by app uid + user_type)
-        $senderToken = null;
-        if ($excludeSenderId !== null && $excludeSenderId !== '' && $senderType !== null) {
-            $senderToken = $this->getFCMTokenForChatUserId($excludeSenderId, $senderType);
-        }
-        if (!empty($senderToken)) {
-            $tokens = array_values(array_filter($tokens, function ($t) use ($senderToken) {
-                return $t !== $senderToken;
-            }));
-        }
-
         return $tokens;
     }
 
     /**
-     * Send new-message notification to all admins (when receiver is Support).
-     * Excludes the sender so they never get their own message (by sender id/type and optionally by sender's fl_chat_users id).
-     *
-     * @param string|int|null $senderChatUserId fl_chat_users.id of the sender – when set, this row is always excluded so the sender never gets the FCM
+     * Send new-message notification to all staff (when receiver is Support – so admins get push when app is closed)
      */
-    public function sendMessageNotificationToAllStaff($senderId, $senderUserType, $message, $chatConnectionId, $senderChatUserId = null) {
-        $tokens = $this->getFCMTokensForAllStaffExcludingSender($senderId, $senderUserType, $senderChatUserId);
+    public function sendMessageNotificationToAllStaff($senderId, $senderUserType, $message, $chatConnectionId) {
+        $tokens = $this->getFCMTokensForAllStaff();
         if (empty($tokens)) {
-            echo "FCM: No staff FCM tokens found for Support inbox notification (sender=$senderId, type=$senderUserType). Ensure admins have opened the app and have FCM token saved in fl_chat_users with staff_id set and user_type in ('admin','staff').\n";
+            echo "FCM: No staff FCM tokens found for Support inbox notification.\n";
             return false;
         }
         $senderName = $this->getSenderName($senderId, $senderUserType);
@@ -704,10 +687,9 @@ class FCMNotificationHelper {
         if (mb_strlen($message) > 100) {
             $messagePreview .= '...';
         }
-        // Ensure chatId is string for Flutter payload
         $data = [
-            'chatId' => (string) $chatConnectionId,
-            'senderId' => (string) $senderId,
+            'chatId' => $chatConnectionId,
+            'senderId' => $senderId,
             'message' => $message
         ];
         $sent = 0;
@@ -721,33 +703,20 @@ class FCMNotificationHelper {
     }
 
     /**
-     * Send notification for new message to the chat receiver.
-     * FCM token is looked up by receiver's app UID (staff_id, teacher_id, student_id, or parent_id) and user_type.
+     * Send notification for new message
      *
-     * @param string|int $receiverUserId   Receiver's app uid (staff_id, teacher_id, student_id, or parent_id)
-     * @param string     $receiverUserType Receiver's user_type: admin, staff, teacher, student, guardian, parent
-     * @param string|int $senderId         Sender's app uid
-     * @param string     $senderUserType   Sender's user_type
-     * @param string     $message           Message text
-     * @param string|int $chatConnectionId  Chat connection id
-     * @param string|int|null $receiverChatUserId Unused; kept for backward compatibility. Token is always resolved by receiverUserId + receiverUserType.
+     * @param string|int|null $receiverChatUserRowId fl_chat_users.id for the receiver (preferred for token lookup)
      */
-    public function sendMessageNotification($receiverUserId, $receiverUserType, $senderId, $senderUserType, $message, $chatConnectionId, $receiverChatUserId = null) {
-        // Do not send notification to the sender (e.g. teacher should not get push for their own message)
-        if ((string) $receiverUserId === (string) $senderId) {
-            echo "FCM: Skipping notification - receiver is the sender (user $receiverUserId).\n";
-            return true;
-        }
-
-        // Look up receiver's FCM token by app uid (staff_id, teacher_id, student_id, parent_id) and user_type
-        $fcmToken = $this->getFCMTokenForChatUserId($receiverUserId, $receiverUserType);
+    public function sendMessageNotification($receiverUserId, $receiverUserType, $senderId, $senderUserType, $message, $chatConnectionId, $receiverChatUserRowId = null) {
+        // Get FCM token for receiver
+        $fcmToken = $this->getFCMTokenForUser($receiverUserId, $receiverUserType, $receiverChatUserRowId);
         
         if (!$fcmToken) {
-            echo "FCM: No FCM token found for receiver (user_id=$receiverUserId, type=$receiverUserType). User may not have granted notification permissions.\n";
+            echo "FCM: No FCM token found for user $receiverUserId. User may not have granted notification permissions.\n";
             return false;
         }
         
-        // Get sender name (staff: staff.name, student: users.username, Support: "Support")
+        // Get sender name
         $senderName = $this->getSenderName($senderId, $senderUserType);
         
         // Truncate message if too long
@@ -756,7 +725,7 @@ class FCMNotificationHelper {
             $messagePreview .= '...';
         }
         
-        // Send notification to receiver only
+        // Send notification
         return $this->sendNotification(
             $fcmToken,
             $senderName,

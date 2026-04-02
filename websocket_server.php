@@ -327,12 +327,13 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 echo "Support thread group: new_message sent to $inThread admin(s) viewing this thread\n";
                             }
 
-                            if (!$deliveredWs && $receiver_user_id && $receiver_user_type && (int)$receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
+                            // FCM: token is resolved by fl_chat_users.id first; receiver_user_type fallback only if row lookup fails
+                            if (!$deliveredWs && $receiver_user_id !== null && $receiver_user_id !== '' && (int) $receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
                                 echo "Sending FCM notification to receiver $receiver_user_id (WebSocket not delivered)...\n";
                                 @ob_flush(); @flush();
                                 $this->fcmHelper->sendMessageNotification(
                                     $receiver_user_id,
-                                    $receiver_user_type,
+                                    $receiver_user_type ?? 'student',
                                     $sender_id_for_delivery,
                                     $admin_replying_as_support ? 'staff' : $user_type,
                                     $message,
@@ -1190,7 +1191,7 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
-     * Get user_type for a chat_user_id
+     * Get user_type for a chat_user_id (infer from columns when user_type is empty).
      */
     private function getReceiverUserTypeFromChatUserId($chat_user_id)
     {
@@ -1199,12 +1200,35 @@ class ChatWebSocketServer implements MessageComponentInterface
             return null;
         }
         $chat_user_id = $mysqli->real_escape_string($chat_user_id);
-        $sql = "SELECT user_type FROM fl_chat_users WHERE id = '$chat_user_id' LIMIT 1";
+        $sql = "SELECT user_type, staff_id, student_id, teacher_id, parent_id FROM fl_chat_users WHERE id = '$chat_user_id' LIMIT 1";
         $result = $mysqli->query($sql);
         if ($result && $row = $result->fetch_assoc()) {
-            $ut = $row['user_type'];
+            $ut = isset($row['user_type']) ? strtolower(trim((string) $row['user_type'])) : '';
+            if ($ut === 'parent') {
+                $ut = 'guardian';
+            }
+            if ($ut !== '') {
+                $mysqli->close();
+                return $ut;
+            }
+            if ($row['parent_id'] !== null && $row['parent_id'] !== '' && (string) $row['parent_id'] !== '0') {
+                $mysqli->close();
+                return 'guardian';
+            }
+            if ($row['student_id'] !== null && $row['student_id'] !== '' && (string) $row['student_id'] !== '0') {
+                $mysqli->close();
+                return 'student';
+            }
+            if ($row['teacher_id'] !== null && $row['teacher_id'] !== '' && (string) $row['teacher_id'] !== '0') {
+                $mysqli->close();
+                return 'teacher';
+            }
+            if (isset($row['staff_id']) && $row['staff_id'] !== null && $row['staff_id'] !== '') {
+                $mysqli->close();
+                return 'staff';
+            }
             $mysqli->close();
-            return $ut;
+            return 'student';
         }
         $mysqli->close();
         return null;

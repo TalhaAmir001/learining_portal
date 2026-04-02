@@ -27,6 +27,7 @@ class NotificationProvider with ChangeNotifier {
         // Start listening for messages
         await _notificationService.startListeningForMessages(
           authProvider.currentUserId!,
+          userType: authProvider.userType,
         );
       }
 
@@ -48,6 +49,7 @@ class NotificationProvider with ChangeNotifier {
       // Start listening for messages
       await _notificationService.startListeningForMessages(
         authProvider.currentUserId!,
+        userType: authProvider.userType,
       );
     } else {
       // Stop listening when logged out
@@ -76,6 +78,7 @@ class NotificationProvider with ChangeNotifier {
       chatConnectionId,
       senderId ?? 'unknown',
       message,
+      senderDisplayName: messageData['sender_display_name']?.toString(),
     );
   }
 

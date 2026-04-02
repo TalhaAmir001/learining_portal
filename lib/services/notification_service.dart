@@ -176,6 +176,8 @@ class NotificationService {
 
   bool _isInitialized = false;
   String? _currentUserId;
+  /// Used for foreground FCM: admins get WS + FCM for Support inbox; suppress duplicate local from FCM.
+  UserType? _messageListenerUserType;
   final Map<String, StreamSubscription> _chatSubscriptions = {};
   String? _currentOpenChatId; // Track which chat screen is currently open
 
@@ -385,8 +387,12 @@ class NotificationService {
   }
 
   // Start listening for new messages
-  Future<void> startListeningForMessages(String currentUserId) async {
-    if (_currentUserId == currentUserId) {
+  Future<void> startListeningForMessages(
+    String currentUserId, {
+    UserType? userType,
+  }) async {
+    if (_currentUserId == currentUserId &&
+        _messageListenerUserType == userType) {
       return; // Already listening
     }
 
@@ -394,6 +400,7 @@ class NotificationService {
     stopListeningForMessages();
 
     _currentUserId = currentUserId;
+    _messageListenerUserType = userType;
 
     try {
       // Get all chats where current user is a participant
@@ -540,9 +547,36 @@ class NotificationService {
       final ticketId = message.data['ticket_id']?.toString();
       payload = (ticketId != null && ticketId.isNotEmpty) ? 'ticket_$ticketId' : null;
     } else {
-      // Chat message: do not show a local notification when app is in foreground,
-      // because the same message is already delivered via WebSocket and will trigger
-      // showNotificationForIncomingMessage. Showing here would cause double notification.
+      // Chat message: server sends FCM only when WebSocket did not deliver (!deliveredWs).
+      // Foreground must show that as a local notification — otherwise guardians see nothing
+      // when WS is stale (push still works when the app is backgrounded).
+      // Admins get both WS and FCM for Support-inbox traffic; skip FCM here to avoid dupes.
+      if (_messageListenerUserType == UserType.admin) {
+        return;
+      }
+      final chatIdStr = chatId?.toString();
+      final bodyText =
+          message.data['message']?.toString() ??
+          message.notification?.body ??
+          '';
+      if (chatIdStr == null ||
+          chatIdStr.isEmpty ||
+          bodyText.trim().isEmpty) {
+        debugPrint(
+          'Foreground FCM chat: missing chatId or body, skipping',
+        );
+        return;
+      }
+      final senderIdForNotif =
+          message.data['senderId']?.toString() ?? 'unknown';
+      final nameHint = message.notification?.title ??
+          message.data['title']?.toString();
+      await showNotificationForWebSocketMessage(
+        chatIdStr,
+        senderIdForNotif,
+        bodyText,
+        senderDisplayName: nameHint,
+      );
       return;
     }
 
@@ -730,8 +764,9 @@ class NotificationService {
   Future<void> showNotificationForWebSocketMessage(
     String chatConnectionId,
     String senderId,
-    String messageText,
-  ) async {
+    String messageText, {
+    String? senderDisplayName,
+  }) async {
     if (!await SettingsProvider.areNotificationsEnabled()) return;
     // Don't show if this chat is currently open
     if (_currentOpenChatId == chatConnectionId) {
@@ -743,17 +778,22 @@ class NotificationService {
 
     try {
       String senderName = 'New message';
-      try {
-        final senderDoc = await _firestore
-            .collection('user')
-            .doc(senderId)
-            .get();
-        if (senderDoc.exists) {
-          final sender = UserModel.fromFirestore(senderDoc);
-          senderName = sender.fullName;
+      final fromPayload = senderDisplayName?.trim();
+      if (fromPayload != null && fromPayload.isNotEmpty) {
+        senderName = fromPayload;
+      } else {
+        try {
+          final senderDoc = await _firestore
+              .collection('user')
+              .doc(senderId)
+              .get();
+          if (senderDoc.exists) {
+            final sender = UserModel.fromFirestore(senderDoc);
+            senderName = sender.fullName;
+          }
+        } catch (e) {
+          debugPrint('Could not fetch sender name for notification: $e');
         }
-      } catch (e) {
-        debugPrint('Could not fetch sender name for notification: $e');
       }
 
       final body = messageText.length > 100
@@ -864,6 +904,7 @@ class NotificationService {
     }
     _chatSubscriptions.clear();
     _currentUserId = null;
+    _messageListenerUserType = null;
     debugPrint('Stopped listening for messages');
   }
 

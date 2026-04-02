@@ -270,12 +270,14 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         debugPrint('Main: New message received, refreshing inbox');
         // Refresh inbox to show new messages
         inboxProvider.refreshChats();
-        // Do not show local notification for our own message (e.g. teacher sent to Support, other connection got echo)
+        // Do not show local notification for our own message (echo uses API id for guardian/student)
         final senderId = messageData['sender_id']?.toString();
-        final currentUser = authProvider.currentUser;
-        final myId = currentUser != null ? currentUser.uid : null;
-        if (senderId != null && myId != null && senderId == myId) {
-          return;
+        final myFirebaseId = authProvider.currentUser?.uid;
+        final myApiId = authProvider.apiUserIdForChat;
+        if (senderId != null && myFirebaseId != null) {
+          final isOwn = senderId == myFirebaseId ||
+              (myApiId != null && senderId == myApiId);
+          if (isOwn) return;
         }
         notificationProvider.showNotificationForIncomingMessage(messageData);
       };

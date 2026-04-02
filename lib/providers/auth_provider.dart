@@ -429,6 +429,26 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// [ChatScreen] uses [ChatProvider]'s own [WebSocketClient] with the same user_id.
+  /// The server keeps only one connection per user_id, so the inbox listener here
+  /// becomes stale (still "connected" locally but no longer registered). When the
+  /// chat screen is disposed, the server removes the user from the map — call this
+  /// to force a fresh connection so [onNewMessageReceived] and FCM routing work.
+  Future<void> reconnectWebSocketAfterChatClosed() async {
+    if (!_isAuthenticated) return;
+    _shouldMaintainConnection = true;
+    debugPrint(
+      'AuthProvider: Reconnecting WebSocket after chat closed (restore server registration)',
+    );
+    if (_wsClient != null) {
+      _wsClient!.dispose();
+      _wsClient = null;
+    }
+    _isWebSocketConnected = false;
+    notifyListeners();
+    await _initializeWebSocket();
+  }
+
   /// Disconnect WebSocket when app goes to background so the server sends FCM
   /// instead. When app resumes, call [ensureWebSocketConnection] to reconnect.
   void disconnectWebSocketForBackground() {

@@ -18,6 +18,8 @@ remove loading when new message.
 
 double notification fix
 
+notification from admin to parent ng
+
 
 CREATE TABLE `sections` (
   `id` int(11) NOT NULL,
