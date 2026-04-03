@@ -28,6 +28,7 @@ class NotificationProvider with ChangeNotifier {
         await _notificationService.startListeningForMessages(
           authProvider.currentUserId!,
           userType: authProvider.userType,
+          apiUserIdForChat: authProvider.apiUserIdForChat,
         );
       }
 
@@ -50,6 +51,7 @@ class NotificationProvider with ChangeNotifier {
       await _notificationService.startListeningForMessages(
         authProvider.currentUserId!,
         userType: authProvider.userType,
+        apiUserIdForChat: authProvider.apiUserIdForChat,
       );
     } else {
       // Stop listening when logged out
@@ -65,11 +67,16 @@ class NotificationProvider with ChangeNotifier {
         messageData['chatId']?.toString();
     final senderId = messageData['sender_id']?.toString();
     final message = messageData['message']?.toString();
+    final hasAttachment = (messageData['image_url']?.toString().trim().isNotEmpty ?? false) ||
+        (messageData['document_url']?.toString().trim().isNotEmpty ?? false);
+    final type = messageData['message_type']?.toString();
+    final bodyText = (message != null && message.trim().isNotEmpty)
+        ? message
+        : (hasAttachment || type == 'image'
+            ? 'Photo'
+            : (type == 'document' ? 'Document' : null));
 
-    if (chatConnectionId == null ||
-        chatConnectionId.isEmpty ||
-        message == null ||
-        message.isEmpty) {
+    if (chatConnectionId == null || chatConnectionId.isEmpty || bodyText == null) {
       debugPrint('NotificationProvider: Invalid message data for notification');
       return;
     }
@@ -77,8 +84,11 @@ class NotificationProvider with ChangeNotifier {
     _notificationService.showNotificationForWebSocketMessage(
       chatConnectionId,
       senderId ?? 'unknown',
-      message,
+      bodyText,
       senderDisplayName: messageData['sender_display_name']?.toString(),
+      actualSenderStaffId:
+          messageData['actual_sender_staff_id']?.toString(),
+      serverMessageId: messageData['message_id']?.toString(),
     );
   }
 

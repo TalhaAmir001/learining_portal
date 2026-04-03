@@ -74,12 +74,13 @@ class WebSocketClient {
     required String userType,
     bool autoReconnect = true,
   }) async {
-    if (_isConnecting || (_isConnected && _userId == userId)) {
+    if (_isConnecting ||
+        (_isConnected && _userId == userId.toString())) {
       debugPrint('WebSocketClient: Already connected or connecting');
       return _isConnected;
     }
 
-    _userId = userId;
+    _userId = userId.toString();
     _userType = userType;
     _shouldReconnect = autoReconnect;
 
@@ -131,7 +132,8 @@ class WebSocketClient {
       // Send connect action directly (bypass _sendMessage checks since we're establishing connection)
       final connectMessage = {
         'action': 'connect',
-        'user_id': _userId,
+        // Always string: server must key $this->users the same as DB id strings (e.g. parent "669").
+        'user_id': _userId.toString(),
         'user_type': _userType,
       };
 

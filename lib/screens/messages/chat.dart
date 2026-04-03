@@ -606,6 +606,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       return MessageBubble(
                         message: message,
                         isCurrentUser: isCurrentUser,
+                        viewerIsAdmin:
+                            authProvider.userType == UserType.admin,
                         formatTime: _formatTime,
                       );
                     },

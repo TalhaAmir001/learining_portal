@@ -8,6 +8,7 @@ import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/network/domain/auth_repository.dart';
 import 'package:learining_portal/services/notification_service.dart';
+import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
 
 enum UserType { student, guardian, teacher, admin }
@@ -129,6 +130,16 @@ class AuthProvider with ChangeNotifier {
       debugPrint('Error saving user ID to SharedPreferences: $e');
       // Don't rethrow - user is still authenticated for current session
       // Session just won't persist across app restarts
+    }
+  }
+
+  Future<void> _saveUserTypeToSharedPreferences(UserType userType) async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs == null) return;
+      await _prefs!.setString(prefsKeyUserType, _userTypeToString(userType));
+    } catch (e) {
+      debugPrint('Error saving user type to SharedPreferences: $e');
     }
   }
 
@@ -518,6 +529,7 @@ class AuthProvider with ChangeNotifier {
     // Set session state and persist ID so login completes immediately
     _currentUserId = documentId;
     await _saveUserIdToSharedPreferences(documentId);
+    await _saveUserTypeToSharedPreferences(user.userType);
 
     // Write to Firestore in background – don't await so login doesn't hang
     unawaited(
@@ -835,6 +847,7 @@ class AuthProvider with ChangeNotifier {
           _isAuthenticated = true;
           _currentUserId = savedUserId;
           _shouldMaintainConnection = true; // Enable connection maintenance
+          await _saveUserTypeToSharedPreferences(_currentUser!.userType);
           debugPrint(
             'User session restored from SharedPreferences: $savedUserId',
           );

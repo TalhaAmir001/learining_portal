@@ -675,8 +675,13 @@ class FCMNotificationHelper {
 
     /**
      * Send new-message notification to all staff (when receiver is Support – so admins get push when app is closed)
+     *
+     * Uses notification + data so the OS shows reliably when the app is killed (data-only is unreliable on iOS / some Android).
+     * Flutter avoids duplicating in the background handler when message.notification is set.
+     *
+     * @param string|int|null $messageId fl_chat_messages.id (for tap / dedup in app)
      */
-    public function sendMessageNotificationToAllStaff($senderId, $senderUserType, $message, $chatConnectionId) {
+    public function sendMessageNotificationToAllStaff($senderId, $senderUserType, $message, $chatConnectionId, $messageId = null) {
         $tokens = $this->getFCMTokensForAllStaff();
         if (empty($tokens)) {
             echo "FCM: No staff FCM tokens found for Support inbox notification.\n";
@@ -687,11 +692,16 @@ class FCMNotificationHelper {
         if (mb_strlen($message) > 100) {
             $messagePreview .= '...';
         }
+        $mid = $messageId !== null && $messageId !== '' ? (string) $messageId : '';
         $data = [
-            'chatId' => $chatConnectionId,
-            'senderId' => $senderId,
-            'message' => $message
+            'chatId' => (string) $chatConnectionId,
+            'senderId' => (string) $senderId,
+            'message' => $message,
+            'body' => $messagePreview,
         ];
+        if ($mid !== '') {
+            $data['message_id'] = $mid;
+        }
         $sent = 0;
         foreach ($tokens as $token) {
             if ($this->sendNotification($token, $senderName, $messagePreview, $data)) {
@@ -703,11 +713,13 @@ class FCMNotificationHelper {
     }
 
     /**
-     * Send notification for new message
+     * Send FCM for a new chat message (student/guardian/teacher receiver).
+     * Sent even when WebSocket already delivered so the app gets onMessage when foreground + reliable tray when killed.
      *
      * @param string|int|null $receiverChatUserRowId fl_chat_users.id for the receiver (preferred for token lookup)
+     * @param string|int|null $messageId fl_chat_messages.id
      */
-    public function sendMessageNotification($receiverUserId, $receiverUserType, $senderId, $senderUserType, $message, $chatConnectionId, $receiverChatUserRowId = null) {
+    public function sendMessageNotification($receiverUserId, $receiverUserType, $senderId, $senderUserType, $message, $chatConnectionId, $receiverChatUserRowId = null, $messageId = null) {
         // Get FCM token for receiver
         $fcmToken = $this->getFCMTokenForUser($receiverUserId, $receiverUserType, $receiverChatUserRowId);
         
@@ -724,17 +736,18 @@ class FCMNotificationHelper {
         if (mb_strlen($message) > 100) {
             $messagePreview .= '...';
         }
-        
-        // Send notification
-        return $this->sendNotification(
-            $fcmToken,
-            $senderName,
-            $messagePreview,
-            [
-                'chatId' => $chatConnectionId,
-                'senderId' => $senderId,
-                'message' => $message
-            ]
-        );
+
+        $mid = $messageId !== null && $messageId !== '' ? (string) $messageId : '';
+        $data = [
+            'chatId' => (string) $chatConnectionId,
+            'senderId' => (string) $senderId,
+            'message' => $message,
+            'body' => $messagePreview,
+        ];
+        if ($mid !== '') {
+            $data['message_id'] = $mid;
+        }
+
+        return $this->sendNotification($fcmToken, $senderName, $messagePreview, $data);
     }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:learining_portal/models/message_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
+import 'package:learining_portal/utils/constants.dart';
 import 'package:open_file/open_file.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -14,12 +15,15 @@ final RegExp _urlRegex = RegExp(
 class MessageBubble extends StatefulWidget {
   final MessageModel message;
   final bool isCurrentUser;
+  /// When false, staff/Support replies show the label "Support" instead of admin display name.
+  final bool viewerIsAdmin;
   final String Function(DateTime) formatTime;
 
   const MessageBubble({
     super.key,
     required this.message,
     required this.isCurrentUser,
+    this.viewerIsAdmin = false,
     required this.formatTime,
   });
 
@@ -127,6 +131,23 @@ class _MessageBubbleState extends State<MessageBubble> {
     await _downloadContent(context, url, filename, false);
   }
 
+  /// Label above the bubble: admins see real [MessageModel.senderDisplayName] for Support threads;
+  /// other roles see "Support" instead of the staff name.
+  static String? bubbleSenderLabel(MessageModel message, bool viewerIsAdmin) {
+    final fromSupport = message.senderId.trim() == supportUserId ||
+        (message.actualSenderId != null &&
+            message.actualSenderId!.trim().isNotEmpty);
+    if (viewerIsAdmin) {
+      final name = message.senderDisplayName;
+      if (name != null && name.isNotEmpty) return name;
+      return null;
+    }
+    if (fromSupport) return 'Support';
+    final name = message.senderDisplayName;
+    if (name != null && name.isNotEmpty) return name;
+    return null;
+  }
+
   Widget _buildLinkifiedText(String text, bool isCurrentUser) {
     final color = isCurrentUser ? Colors.white : Colors.black87;
     final linkColor = isCurrentUser
@@ -213,6 +234,8 @@ class _MessageBubbleState extends State<MessageBubble> {
     final colorScheme = Theme.of(context).colorScheme;
     final message = widget.message;
     final isCurrentUser = widget.isCurrentUser;
+    final senderLabel =
+        bubbleSenderLabel(message, widget.viewerIsAdmin);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -257,10 +280,9 @@ class _MessageBubbleState extends State<MessageBubble> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (message.senderDisplayName != null &&
-                      message.senderDisplayName!.isNotEmpty) ...[
+                  if (senderLabel != null) ...[
                     Text(
-                      message.senderDisplayName!,
+                      senderLabel,
                       style: TextStyle(
                         color: isCurrentUser
                             ? Colors.white70

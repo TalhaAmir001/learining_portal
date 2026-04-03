@@ -18,7 +18,9 @@ remove loading when new message.
 
 double notification fix
 
-notification from admin to parent ng
+notification from admin to parent admin name fix
+
+add a check before login
 
 
 CREATE TABLE `sections` (

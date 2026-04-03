@@ -9,3 +9,7 @@ final FirebaseAuth firebaseAuth = FirebaseAuth.instance;
 
 /// Virtual Support user ID (staff_id = 0 in backend). Students and teachers chat only with Support; any admin can reply.
 const String supportUserId = '0';
+
+/// [SharedPreferences] key for the logged-in app role (`student` | `guardian` | `teacher` | `admin`).
+/// Used by background FCM so chat notification titles match in-app rules (e.g. "Support" for non-admins).
+const String prefsKeyUserType = 'current_user_type';

@@ -13,6 +13,9 @@ class ChatProvider with ChangeNotifier {
   String? _currentUserId;
   String? _currentUserType; // UserType enum string: student, guardian, teacher, admin
   String? _currentUserApiId; // The actual staff_id or student_id from API
+  /// Used to forward WS payloads for *other* threads to [AuthProvider.onNewMessageReceived]
+  /// (server allows one socket per user_id; Chat steals Auth's registration).
+  AuthProvider? _authProviderForGlobalRelay;
 
   List<MessageModel> _messages = [];
   bool _isLoading = false;
@@ -69,6 +72,9 @@ class ChatProvider with ChangeNotifier {
 
   // Initialize WebSocket connection
   Future<void> _initializeWebSocket(AuthProvider? authProvider) async {
+    if (authProvider != null) {
+      _authProviderForGlobalRelay = authProvider;
+    }
     // If already connected with the same user, don't reconnect
     final apiUserId = await _getApiUserId(authProvider);
     if (apiUserId == null) {
@@ -176,7 +182,12 @@ class ChatProvider with ChangeNotifier {
       final message = MessageModel.fromWebSocket(messageData);
 
       // Only add if it's for the current chat
-      if (message.chatId != _chatConnectionId) return;
+      if (message.chatId != _chatConnectionId) {
+        // This socket is the only one registered for our user_id; Auth never sees this payload.
+        // Forward so inbox refresh + local notification run (e.g. Support reply while user is in another thread).
+        _authProviderForGlobalRelay?.onNewMessageReceived?.call(messageData);
+        return;
+      }
 
       final existingIndex = _messages.indexWhere((m) => m.messageId == message.messageId);
       if (existingIndex != -1) {

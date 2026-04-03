@@ -20,6 +20,7 @@ import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard.dart';
 import 'services/notification_service.dart';
+import 'utils/constants.dart';
 
 // Global navigator key for navigation from anywhere in the app
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -265,16 +266,17 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       notificationProvider.initialize(authProvider);
 
-      // Set up WebSocket message listener to refresh inbox and show notification when new messages arrive
+      // WebSocket: refresh inbox + local notification (FCM also sends; [NotificationService] dedups by message_id).
       authProvider.onNewMessageReceived = (messageData) {
         debugPrint('Main: New message received, refreshing inbox');
-        // Refresh inbox to show new messages
         inboxProvider.refreshChats();
-        // Do not show local notification for our own message (echo uses API id for guardian/student)
         final senderId = messageData['sender_id']?.toString();
         final myFirebaseId = authProvider.currentUser?.uid;
         final myApiId = authProvider.apiUserIdForChat;
-        if (senderId != null && myFirebaseId != null) {
+        // sender_id "0" = Support (admin reply), not the logged-in user.
+        if (senderId != null &&
+            myFirebaseId != null &&
+            senderId.trim() != supportUserId) {
           final isOwn = senderId == myFirebaseId ||
               (myApiId != null && senderId == myApiId);
           if (isOwn) return;
@@ -313,11 +315,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       // App came to foreground - ensure WebSocket is connected
-      debugPrint('Main: App resumed, ensuring WebSocket connection');
       if (authProvider.isAuthenticated) {
-        authProvider.ensureWebSocketConnection().catchError((error) {
-          debugPrint('Main: Error ensuring WebSocket connection: $error');
-        });
+        final chatOpen = NotificationService().hasOpenChatSession;
+        if (chatOpen) {
+          // ChatProvider holds the registered socket; reconnecting Auth would steal it and break chat + notifications.
+          debugPrint(
+            'Main: App resumed with chat open — skip Auth WebSocket ensure',
+          );
+        } else {
+          debugPrint('Main: App resumed, ensuring WebSocket connection');
+          authProvider.ensureWebSocketConnection().catchError((error) {
+            debugPrint('Main: Error ensuring WebSocket connection: $error');
+          });
+        }
         // Refresh FCM token in database so server can send push when app is closed
         notificationProvider.refreshFCMTokenInDatabase(authProvider).catchError(
           (error) {

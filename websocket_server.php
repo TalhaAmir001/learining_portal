@@ -86,10 +86,19 @@ class ChatWebSocketServer implements MessageComponentInterface
         switch ($action) {
             case 'connect':
                 // User connects with their user_id
-                $user_id = $data['user_id'] ?? null;
+                // Always use string keys: json_decode may give int 669 while DB lookups use "669",
+                // so isset($this->users[$key]) would miss and new_message would never be delivered.
+                $user_id_raw = $data['user_id'] ?? null;
                 $user_type = $data['user_type'] ?? 'staff';
 
-                if ($user_id !== null && $user_id !== '') {
+                if ($user_id_raw !== null && $user_id_raw !== '') {
+                    $user_id = trim((string) $user_id_raw);
+                    if ($user_id === '') {
+                        break;
+                    }
+                    if (ctype_digit($user_id)) {
+                        unset($this->users[(int) $user_id]);
+                    }
                     $this->users[$user_id] = $from;
                     $from->user_id = $user_id;
                     $from->user_type = $user_type;
@@ -250,15 +259,24 @@ class ChatWebSocketServer implements MessageComponentInterface
                             if ($receiver_user_id !== null && (int)$receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
                                 $receiverKeysToTry = $this->getReceiverAppUserIdsForChatUserRow($effective_receiver_chat_user_id);
                                 foreach ($receiverKeysToTry as $key) {
+                                    $recvConn = null;
                                     if (isset($this->users[$key])) {
+                                        $recvConn = $this->users[$key];
+                                    } elseif (ctype_digit((string) $key) && isset($this->users[(int) $key])) {
+                                        $recvConn = $this->users[(int) $key];
+                                    }
+                                    if ($recvConn !== null) {
                                         try {
-                                            $this->users[$key]->send(json_encode($basePayload));
+                                            $recvConn->send(json_encode($basePayload));
                                             echo "Message delivered via WebSocket to user $key\n";
                                             $deliveredWs = true;
                                             break;
                                         } catch (\Exception $e) {
                                             echo "WebSocket send failed for user $key: {$e->getMessage()}, removing from users\n";
-                                            unset($this->users[$key]);
+                                            unset($this->users[(string) $key]);
+                                            if (ctype_digit((string) $key)) {
+                                                unset($this->users[(int) $key]);
+                                            }
                                         }
                                     }
                                 }
@@ -327,9 +345,11 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 echo "Support thread group: new_message sent to $inThread admin(s) viewing this thread\n";
                             }
 
-                            // FCM: token is resolved by fl_chat_users.id first; receiver_user_type fallback only if row lookup fails
-                            if (!$deliveredWs && $receiver_user_id !== null && $receiver_user_id !== '' && (int) $receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
-                                echo "Sending FCM notification to receiver $receiver_user_id (WebSocket not delivered)...\n";
+                            // FCM data-only: always send for non-Support receivers so the app can show a foreground/local
+                            // alert even when WebSocket already delivered (parents/students otherwise only got push when WS was down).
+                            // Data-only avoids duplicate system tray + flutter_local_notifications when app is backgrounded.
+                            if ($message_id && $receiver_user_id !== null && $receiver_user_id !== '' && (int) $receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
+                                echo "Sending FCM data-only chat message to receiver $receiver_user_id (WS delivered=" . ($deliveredWs ? 'yes' : 'no') . ")...\n";
                                 @ob_flush(); @flush();
                                 $this->fcmHelper->sendMessageNotification(
                                     $receiver_user_id,
@@ -338,10 +358,11 @@ class ChatWebSocketServer implements MessageComponentInterface
                                     $admin_replying_as_support ? 'staff' : $user_type,
                                     $message,
                                     $chat_connection_id,
-                                    $effective_receiver_chat_user_id
+                                    $effective_receiver_chat_user_id,
+                                    $message_id
                                 );
                                 echo "FCM sendMessageNotification completed for receiver $receiver_user_id\n";
-                            } elseif ($receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
+                            } elseif ($message_id && $receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
                                 // Receiver is Support – send FCM to all staff so admins get push when app is closed
                                 echo "Sending FCM to all staff (Support inbox)...\n";
                                 @ob_flush(); @flush();
@@ -350,10 +371,10 @@ class ChatWebSocketServer implements MessageComponentInterface
                                     $user_type,
                                     $message,
                                     $chat_connection_id,
-                                    $sender_chat_user_id
+                                    $message_id
                                 );
                             } else {
-                                echo "send_message: skip FCM - receiver missing\n";
+                                echo "send_message: skip FCM - receiver missing or no message_id\n";
                             }
 
                             // Send full new_message to sender so they see their message (app shows only server bubbles)
@@ -468,8 +489,14 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 // Notify individual sender (try all possible connection keys)
                                 $keys = $this->getReceiverAppUserIdsForChatUserRow($other_chat_user_id);
                                 foreach ($keys as $key) {
-                                    if (isset($this->users[$key]) && $this->users[$key] !== $from) {
-                                        try { $this->users[$key]->send($readPayload); break; } catch (\Exception $e) {}
+                                    $peer = null;
+                                    if (isset($this->users[$key])) {
+                                        $peer = $this->users[$key];
+                                    } elseif (ctype_digit((string) $key) && isset($this->users[(int) $key])) {
+                                        $peer = $this->users[(int) $key];
+                                    }
+                                    if ($peer !== null && $peer !== $from) {
+                                        try { $peer->send($readPayload); break; } catch (\Exception $e) {}
                                     }
                                 }
                             }
@@ -646,10 +673,14 @@ class ChatWebSocketServer implements MessageComponentInterface
             $this->staffViewingChat->detach($conn);
         }
 
-        // Remove user from users array
+        // Remove user from users array (string key; also int key for legacy sessions)
         if (isset($conn->user_id)) {
-            unset($this->users[$conn->user_id]);
-            echo "User {$conn->user_id} disconnected\n";
+            $uid = trim((string) $conn->user_id);
+            unset($this->users[$uid]);
+            if ($uid !== '' && ctype_digit($uid)) {
+                unset($this->users[(int) $uid]);
+            }
+            echo "User {$uid} disconnected\n";
         } else {
             echo "Connection {$conn->resourceId} disconnected\n";
         }

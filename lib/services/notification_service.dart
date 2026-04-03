@@ -10,6 +10,7 @@ import 'package:learining_portal/models/message_model.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/firebase_options.dart';
 import 'package:learining_portal/providers/profile/settings_provider.dart';
+import 'package:learining_portal/utils/chat_notification_label.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/main.dart';
 import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
@@ -76,11 +77,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final isDailyFeedback =
       message.data['type'] == 'daily_feedback' ||
       message.data['notification_type'] == 'daily_feedback';
+  final bgNoticeRaw = message.data['notice_id'];
+  final bgHasNoticeId = bgNoticeRaw != null &&
+      bgNoticeRaw.toString().trim().isNotEmpty;
   final isNotice =
       !isDailyFeedback &&
       (message.data['type'] == 'notice' ||
           message.data['notification_type'] == 'notice' ||
-          message.data['notice_id'] != null);
+          bgHasNoticeId);
 
   // For notices: only show our notification when the message is data-only (no
   // FCM "notification" block). Otherwise the OS shows one from the notification
@@ -94,9 +98,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final isTicketReply = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_reply');
   final hasTicketId = (message.data['ticket_id']?.toString() ?? '').isNotEmpty;
   final isDataOnlyTicket = (isTicketCreated || isTicketReply) && message.notification == null && hasTicketId;
+  // Chat: if FCM includes a "notification" block, the OS already shows one — do not also show local (duplicate).
+  final isChatLike =
+      !isDailyFeedback && !isNotice && !isTicketCreated && !isTicketReply;
+  final isDataOnlyChat = isChatLike &&
+      chatId != null &&
+      chatId.toString().isNotEmpty &&
+      message.notification == null;
 
-  final String title;
-  final String body;
+  late String title;
+  late String body;
   final String? payload;
 
   if (isDailyFeedback) {
@@ -123,20 +134,44 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     payload = (ticketId != null && ticketId.isNotEmpty) ? 'ticket_$ticketId' : null;
   } else {
     title =
-        message.notification?.title ?? message.data['title'] ?? 'New message';
+        message.data['title']?.toString() ??
+        message.notification?.title ??
+        'New message';
     body =
+        message.data['body']?.toString() ??
         message.notification?.body ??
-        message.data['message'] ??
-        message.data['body'] ??
+        message.data['message']?.toString() ??
         'You have a new message';
-    payload = chatId;
+    payload = chatId?.toString();
   }
 
+  if (isDataOnlyChat) {
+    final prefs = await SharedPreferences.getInstance();
+    final viewerIsAdmin = prefs.getString(prefsKeyUserType) == 'admin';
+    final senderIdForTitle = message.data['senderId']?.toString() ?? '';
+    final actualStaff = message.data['actual_sender_staff_id']?.toString();
+    final nameHint = message.data['title']?.toString() ??
+        message.notification?.title?.toString();
+    title = chatNotificationSenderTitle(
+      viewerIsAdmin: viewerIsAdmin,
+      senderId: senderIdForTitle,
+      actualSenderStaffId: actualStaff,
+      senderDisplayNameOrTitleFromPayload: nameHint,
+    );
+  }
+
+  // Only synthesize a local notification when the payload is data-only (no FCM notification block).
+  // Otherwise the system tray already shows one and we would duplicate (e.g. legacy sendNotification).
   if (isDataOnlyDailyFeedback ||
       isDataOnlyTicket ||
-      chatId != null ||
-      message.notification != null && !isNotice ||
-      isDataOnlyNotice) {
+      isDataOnlyNotice ||
+      isDataOnlyChat) {
+    if (isDataOnlyChat) {
+      final mid = message.data['message_id']?.toString();
+      if (!NotificationService.tryClaimChatMessageNotificationId(mid)) {
+        return;
+      }
+    }
     final id = (payload?.hashCode ?? message.hashCode) & 0x7FFFFFFF;
     await localNotifications.show(
       id: id,
@@ -169,6 +204,31 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  /// Avoids double alerts when the same chat message is delivered via WebSocket and FCM (same fl_chat_messages.id).
+  static final Map<String, DateTime> _chatMessageNotificationDedup = {};
+  static const Duration _chatDedupTtl = Duration(seconds: 90);
+
+  /// Returns false if we already showed (or claimed) this [messageId] recently.
+  static bool tryClaimChatMessageNotificationId(String? messageId) {
+    if (messageId == null || messageId.isEmpty) return true;
+    final now = DateTime.now();
+    _chatMessageNotificationDedup.removeWhere(
+      (_, t) => now.difference(t) > _chatDedupTtl,
+    );
+    if (_chatMessageNotificationDedup.containsKey(messageId)) {
+      debugPrint('NotificationService: dedup skip chat message_id=$messageId');
+      return false;
+    }
+    _chatMessageNotificationDedup[messageId] = now;
+    return true;
+  }
+
+  /// Undo [tryClaimChatMessageNotificationId] if [show] failed after claiming.
+  static void releaseChatMessageNotificationId(String? messageId) {
+    if (messageId == null || messageId.isEmpty) return;
+    _chatMessageNotificationDedup.remove(messageId);
+  }
+
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -176,6 +236,8 @@ class NotificationService {
 
   bool _isInitialized = false;
   String? _currentUserId;
+  /// Guardian/student/teacher API id for fl_chat_users (parent_id, etc.). Matches [AuthProvider.apiUserIdForChat].
+  String? _apiUserIdForChat;
   /// Used for foreground FCM: admins get WS + FCM for Support inbox; suppress duplicate local from FCM.
   UserType? _messageListenerUserType;
   final Map<String, StreamSubscription> _chatSubscriptions = {};
@@ -390,9 +452,11 @@ class NotificationService {
   Future<void> startListeningForMessages(
     String currentUserId, {
     UserType? userType,
+    String? apiUserIdForChat,
   }) async {
     if (_currentUserId == currentUserId &&
-        _messageListenerUserType == userType) {
+        _messageListenerUserType == userType &&
+        _apiUserIdForChat == apiUserIdForChat) {
       return; // Already listening
     }
 
@@ -400,6 +464,7 @@ class NotificationService {
     stopListeningForMessages();
 
     _currentUserId = currentUserId;
+    _apiUserIdForChat = apiUserIdForChat;
     _messageListenerUserType = userType;
 
     try {
@@ -503,20 +568,34 @@ class NotificationService {
     final isDailyFeedback =
         message.data['type'] == 'daily_feedback' ||
         message.data['notification_type'] == 'daily_feedback';
+    final noticeIdRaw = message.data['notice_id'];
+    final hasNoticeId = noticeIdRaw != null &&
+        noticeIdRaw.toString().trim().isNotEmpty;
     final isNotice =
         !isDailyFeedback &&
         (message.data['type'] == 'notice' ||
             message.data['notification_type'] == 'notice' ||
-            message.data['notice_id'] != null);
+            hasNoticeId);
     final isTicketCreated = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_created');
     final isTicketReply = !isDailyFeedback && !isNotice && (message.data['type'] == 'ticket_reply');
 
-    // Never show chat notification for our own message (e.g. teacher sent to Support)
+    // Same "own message" rules as main.dart WebSocket handler (Firebase uid + API chat id for guardians).
+    // Never treat Support virtual sender (senderId "0") as self — it would match a bad/missing firebase id of "0".
     if (!isNotice && !isDailyFeedback && !isTicketCreated && !isTicketReply) {
       final senderId = message.data['senderId']?.toString();
-      if (senderId != null && _currentUserId != null && senderId == _currentUserId) {
-        debugPrint('Skipping notification: sender is current user');
-        return;
+      if (senderId != null && senderId.trim() != supportUserId) {
+        final matchesFirebase =
+            _currentUserId != null && senderId == _currentUserId;
+        final matchesApi = _apiUserIdForChat != null &&
+            _apiUserIdForChat!.isNotEmpty &&
+            senderId == _apiUserIdForChat;
+        if (matchesFirebase || matchesApi) {
+          debugPrint(
+            'Foreground FCM: skip own message senderId=$senderId '
+            '(firebase=$_currentUserId apiChat=$_apiUserIdForChat)',
+          );
+          return;
+        }
       }
     }
 
@@ -547,35 +626,50 @@ class NotificationService {
       final ticketId = message.data['ticket_id']?.toString();
       payload = (ticketId != null && ticketId.isNotEmpty) ? 'ticket_$ticketId' : null;
     } else {
-      // Chat message: server sends FCM only when WebSocket did not deliver (!deliveredWs).
-      // Foreground must show that as a local notification — otherwise guardians see nothing
-      // when WS is stale (push still works when the app is backgrounded).
-      // Admins get both WS and FCM for Support-inbox traffic; skip FCM here to avoid dupes.
+      // Chat: server sends data-only FCM even when WebSocket delivered (see websocket_server.php).
+      // Foreground shows a local notification; admins skip here (inbox uses WebSocket).
       if (_messageListenerUserType == UserType.admin) {
         return;
       }
-      final chatIdStr = chatId?.toString();
-      final bodyText =
-          message.data['message']?.toString() ??
-          message.notification?.body ??
-          '';
-      if (chatIdStr == null ||
-          chatIdStr.isEmpty ||
-          bodyText.trim().isEmpty) {
-        debugPrint(
-          'Foreground FCM chat: missing chatId or body, skipping',
-        );
+      final chatIdStr = chatId?.toString().trim();
+      final bodyText = () {
+        final fromData = message.data['body']?.toString() ??
+            message.data['message']?.toString();
+        if (fromData != null && fromData.trim().isNotEmpty) {
+          return fromData;
+        }
+        final fromNotif = message.notification?.body;
+        if (fromNotif != null && fromNotif.trim().isNotEmpty) {
+          return fromNotif;
+        }
+        final t = message.data['message_type']?.toString();
+        if (t == 'image') return 'Photo';
+        if (t == 'document') return 'Document';
+        // Match push/tray: notification body may exist when data fields are sparse (iOS foreground).
+        final fromNotifTitle = message.notification?.title;
+        if (fromNotifTitle != null && fromNotifTitle.isNotEmpty) {
+          return message.notification?.body?.trim().isNotEmpty == true
+              ? message.notification!.body!
+              : 'New message';
+        }
+        return 'New message';
+      }();
+      if (chatIdStr == null || chatIdStr.isEmpty) {
+        debugPrint('Foreground FCM chat: missing chatId, data=${message.data}');
         return;
       }
       final senderIdForNotif =
           message.data['senderId']?.toString() ?? 'unknown';
-      final nameHint = message.notification?.title ??
-          message.data['title']?.toString();
+      final nameHint = message.data['title']?.toString() ??
+          message.notification?.title;
       await showNotificationForWebSocketMessage(
         chatIdStr,
         senderIdForNotif,
         bodyText,
         senderDisplayName: nameHint,
+        actualSenderStaffId:
+            message.data['actual_sender_staff_id']?.toString(),
+        serverMessageId: message.data['message_id']?.toString(),
       );
       return;
     }
@@ -746,8 +840,9 @@ class NotificationService {
 
   // Set the currently open chat (call when chat screen opens)
   void setCurrentOpenChat(String? chatId) {
-    _currentOpenChatId = chatId;
-    debugPrint('Current open chat set to: $chatId');
+    final s = chatId?.toString().trim();
+    _currentOpenChatId = (s != null && s.isNotEmpty) ? s : null;
+    debugPrint('Current open chat set to: $_currentOpenChatId');
   }
 
   // Clear the currently open chat (call when chat screen closes)
@@ -756,45 +851,77 @@ class NotificationService {
     debugPrint('Current open chat cleared');
   }
 
+  bool _isOpenChatConnection(String chatConnectionId) {
+    final open = _currentOpenChatId;
+    if (open == null || open.isEmpty) return false;
+    return open == chatConnectionId.toString().trim();
+  }
+
+  /// True while [ChatScreen] has registered an open thread (WebSocket is owned by [ChatProvider]).
+  bool get hasOpenChatSession =>
+      _currentOpenChatId != null && _currentOpenChatId!.isNotEmpty;
+
+  Future<String> _resolveChatNotificationTitleAsync({
+    required bool viewerIsAdmin,
+    required String senderId,
+    String? actualSenderStaffId,
+    String? senderDisplayNameFromPayload,
+  }) async {
+    final initial = chatNotificationSenderTitle(
+      viewerIsAdmin: viewerIsAdmin,
+      senderId: senderId,
+      actualSenderStaffId: actualSenderStaffId,
+      senderDisplayNameOrTitleFromPayload: senderDisplayNameFromPayload,
+    );
+    if (initial != 'New message') return initial;
+    final sid = senderId.trim();
+    if (sid.isEmpty || sid == supportUserId) return initial;
+    try {
+      final senderDoc =
+          await _firestore.collection('user').doc(senderId).get();
+      if (senderDoc.exists) {
+        return UserModel.fromFirestore(senderDoc).fullName;
+      }
+    } catch (e) {
+      debugPrint('Could not fetch sender name for notification: $e');
+    }
+    return 'New message';
+  }
+
   /// Show a local notification when a new message is received via WebSocket
   /// and the user is not currently viewing that chat.
   /// [chatConnectionId] - The chat connection ID (same as chatId used in setCurrentOpenChat)
   /// [senderId] - The sender's user ID (for fetching name from Firestore)
   /// [messageText] - The message content to show in the notification
+  /// [serverMessageId] - fl_chat_messages id when known (dedup with FCM).
   Future<void> showNotificationForWebSocketMessage(
     String chatConnectionId,
     String senderId,
     String messageText, {
     String? senderDisplayName,
+    String? actualSenderStaffId,
+    String? serverMessageId,
   }) async {
     if (!await SettingsProvider.areNotificationsEnabled()) return;
-    // Don't show if this chat is currently open
-    if (_currentOpenChatId == chatConnectionId) {
+    // Don't show if this chat is currently open (normalize id like FCM data)
+    if (_isOpenChatConnection(chatConnectionId)) {
       debugPrint(
         'Skipping WebSocket notification for currently open chat: $chatConnectionId',
       );
       return;
     }
+    if (!tryClaimChatMessageNotificationId(serverMessageId)) {
+      return;
+    }
 
     try {
-      String senderName = 'New message';
-      final fromPayload = senderDisplayName?.trim();
-      if (fromPayload != null && fromPayload.isNotEmpty) {
-        senderName = fromPayload;
-      } else {
-        try {
-          final senderDoc = await _firestore
-              .collection('user')
-              .doc(senderId)
-              .get();
-          if (senderDoc.exists) {
-            final sender = UserModel.fromFirestore(senderDoc);
-            senderName = sender.fullName;
-          }
-        } catch (e) {
-          debugPrint('Could not fetch sender name for notification: $e');
-        }
-      }
+      final viewerIsAdmin = _messageListenerUserType == UserType.admin;
+      final senderName = await _resolveChatNotificationTitleAsync(
+        viewerIsAdmin: viewerIsAdmin,
+        senderId: senderId,
+        actualSenderStaffId: actualSenderStaffId,
+        senderDisplayNameFromPayload: senderDisplayName,
+      );
 
       final body = messageText.length > 100
           ? '${messageText.substring(0, 100)}...'
@@ -817,8 +944,10 @@ class NotificationService {
         presentSound: true,
       );
 
+      final notifId =
+          ((serverMessageId ?? chatConnectionId).hashCode) & 0x7FFFFFFF;
       await _localNotifications.show(
-        id: chatConnectionId.hashCode,
+        id: notifId,
         title: senderName,
         body: body,
         notificationDetails: const NotificationDetails(
@@ -832,6 +961,7 @@ class NotificationService {
         'Local notification shown for WebSocket message in chat $chatConnectionId',
       );
     } catch (e) {
+      releaseChatMessageNotificationId(serverMessageId);
       debugPrint('Error showing WebSocket message notification: $e');
     }
   }
@@ -843,23 +973,19 @@ class NotificationService {
   ) async {
     if (!await SettingsProvider.areNotificationsEnabled()) return;
     // Don't show notification if this chat is currently open
-    if (_currentOpenChatId == chatId) {
+    if (_isOpenChatConnection(chatId)) {
       debugPrint('Skipping notification for currently open chat: $chatId');
       return;
     }
 
     try {
-      // Fetch sender info
-      final senderDoc = await _firestore
-          .collection('user')
-          .doc(message.senderId)
-          .get();
-      String senderName = 'Someone';
-
-      if (senderDoc.exists) {
-        final sender = UserModel.fromFirestore(senderDoc);
-        senderName = sender.fullName;
-      }
+      final viewerIsAdmin = _messageListenerUserType == UserType.admin;
+      final senderName = await _resolveChatNotificationTitleAsync(
+        viewerIsAdmin: viewerIsAdmin,
+        senderId: message.senderId,
+        actualSenderStaffId: message.actualSenderId,
+        senderDisplayNameFromPayload: message.senderDisplayName,
+      );
 
       const androidDetails = AndroidNotificationDetails(
         'messages_channel',
@@ -904,6 +1030,7 @@ class NotificationService {
     }
     _chatSubscriptions.clear();
     _currentUserId = null;
+    _apiUserIdForChat = null;
     _messageListenerUserType = null;
     debugPrint('Stopped listening for messages');
   }
@@ -912,6 +1039,7 @@ class NotificationService {
   /// so a new token is generated on next login.
   Future<void> clearSessionOnLogout() async {
     stopListeningForMessages();
+    _chatMessageNotificationDedup.clear();
     try {
       await _firebaseMessaging.deleteToken();
       debugPrint(
