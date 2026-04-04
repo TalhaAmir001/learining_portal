@@ -17,6 +17,7 @@ import 'package:learining_portal/utils/app_route_observer.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -27,6 +28,9 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with SingleTickerProviderStateMixin, RouteAware {
+  static final Uri _techChampGlobalUri =
+      Uri.parse('https://techchampglobal.com/');
+
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -101,6 +105,12 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void didPopNext() {
     _ensureWebSocketForDashboard();
+  }
+
+  Future<void> _openTechChampGlobal() async {
+    if (await canLaunchUrl(_techChampGlobalUri)) {
+      await launchUrl(_techChampGlobalUri, mode: LaunchMode.externalApplication);
+    }
   }
 
   Future<void> _maybeShowPullToRefreshHint() async {
@@ -443,13 +453,42 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 // Footer
                                 const SizedBox(height: 24),
                                 Center(
-                                  child: Text(
-                                    '© 2026 GCSE with Rosi',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppColors.textSecondary
-                                              .withOpacity(0.5),
+                                  child: Wrap(
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    alignment: WrapAlignment.center,
+                                    children: [
+                                      Text(
+                                        'Built by ',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: AppColors.textSecondary
+                                                  .withOpacity(0.5),
+                                            ),
+                                      ),
+                                      MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: GestureDetector(
+                                          onTap: _openTechChampGlobal,
+                                          child: Text(
+                                            'TechChamp Global',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                  color: AppColors.primaryBlue,
+                                                  fontWeight: FontWeight.w600,
+                                                  decoration:
+                                                      TextDecoration.underline,
+                                                  decorationColor:
+                                                      AppColors.primaryBlue,
+                                                ),
+                                          ),
                                         ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],

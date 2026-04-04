@@ -19,7 +19,9 @@ import 'providers/support_tickets_provider.dart';
 import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard.dart';
+import 'services/app_gate_service.dart';
 import 'services/notification_service.dart';
+import 'utils/app_colors.dart';
 import 'utils/app_route_observer.dart';
 import 'utils/constants.dart';
 
@@ -52,9 +54,14 @@ void main() async {
     debugPrint('Background message handler registered');
   }
 
-  // Check if user is logged in before starting the app
-  final initialAuthState = await _checkInitialAuthState();
+  // sch_settings.staff_barcode must be 1 before auth (0 = app blocked)
+  final gate = await AppGateService.checkStaffBarcodeGate();
+  if (gate != StaffBarcodeGateResult.allowed) {
+    runApp(_StaffBarcodeBlockedApp(initialResult: gate));
+    return;
+  }
 
+  final initialAuthState = await _checkInitialAuthState();
   runApp(MyApp(initialAuthState: initialAuthState));
 }
 
@@ -168,6 +175,12 @@ Future<InitialAuthState> _checkInitialAuthState() async {
     // Return unauthenticated state without prefs
     return InitialAuthState(isAuthenticated: false, prefs: null);
   }
+}
+
+/// Loads session and runs the main app after [staff_barcode] gate passes (e.g. retry).
+Future<void> _runMainAppAfterGate() async {
+  final initialAuthState = await _checkInitialAuthState();
+  runApp(MyApp(initialAuthState: initialAuthState));
 }
 
 // Helper class to pass initial auth state to MyApp
@@ -366,6 +379,108 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           return const AuthScreen();
         }
       },
+    );
+  }
+}
+
+/// Shown when [sch_settings.staff_barcode] is 0 or the gate API fails; full app does not load.
+class _StaffBarcodeBlockedApp extends StatefulWidget {
+  final StaffBarcodeGateResult initialResult;
+
+  const _StaffBarcodeBlockedApp({required this.initialResult});
+
+  @override
+  State<_StaffBarcodeBlockedApp> createState() =>
+      _StaffBarcodeBlockedAppState();
+}
+
+class _StaffBarcodeBlockedAppState extends State<_StaffBarcodeBlockedApp> {
+  late StaffBarcodeGateResult _result;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _result = widget.initialResult;
+  }
+
+  Future<void> _retry() async {
+    setState(() => _busy = true);
+    final r = await AppGateService.checkStaffBarcodeGate();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (r == StaffBarcodeGateResult.allowed) {
+      await _runMainAppAfterGate();
+    } else {
+      setState(() => _result = r);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isError = _result == StaffBarcodeGateResult.error;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
+      ),
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.phone_android_outlined,
+                  size: 64,
+                  color: AppColors.primaryBlue.withOpacity(0.75),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  isError ? 'Unable to connect' : 'App unavailable',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  isError
+                      ? 'Check your internet connection and try again.'
+                      : 'This app is not available at the moment. Please contact your school if you need help.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: AppColors.textSecondary.withOpacity(0.95),
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _busy ? null : _retry,
+                    child: _busy
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Try again'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

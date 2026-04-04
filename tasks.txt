@@ -30,6 +30,11 @@ teacher notifications work when come back from chat screen(needs fix)
 
 timezone
 
+
+table: sch_settings
+student_height
+staff_barcode
+
 CREATE TABLE `sections` (
   `id` int(11) NOT NULL,
   `section` varchar(60) DEFAULT NULL,
