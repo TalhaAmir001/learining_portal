@@ -20,6 +20,7 @@ import 'models/user_model.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard.dart';
 import 'services/notification_service.dart';
+import 'utils/app_route_observer.dart';
 import 'utils/constants.dart';
 
 // Global navigator key for navigation from anywhere in the app
@@ -213,6 +214,7 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
+        navigatorObservers: [appRouteObserver],
         title: 'Learning Portal',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(

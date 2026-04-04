@@ -22,6 +22,13 @@ notification from admin to parent admin name fix
 
 add a check before login
 
+remove support ticket and is issue resolved floater bar
+
+also fix top logo done
+
+teacher notifications work when come back from chat screen(needs fix)
+
+timezone
 
 CREATE TABLE `sections` (
   `id` int(11) NOT NULL,

@@ -370,28 +370,28 @@ class _AuthScreenState extends State<AuthScreen>
           const SizedBox(height: 16),
 
           // Forgot Password
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Forgot password feature coming soon!'),
-                  ),
-                );
-              },
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              ),
-              child: Text(
-                'Forgot Password?',
-                style: TextStyle(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
+          // Align(
+          //   alignment: Alignment.centerRight,
+          //   child: TextButton(
+          //     onPressed: () {
+          //       ScaffoldMessenger.of(context).showSnackBar(
+          //         const SnackBar(
+          //           content: Text('Forgot password feature coming soon!'),
+          //         ),
+          //       );
+          //     },
+          //     style: TextButton.styleFrom(
+          //       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          //     ),
+          //     child: Text(
+          //       'Forgot Password?',
+          //       style: TextStyle(
+          //         color: colorScheme.primary,
+          //         fontWeight: FontWeight.w600,
+          //       ),
+          //     ),
+          //   ),
+          // ),
 
           const SizedBox(height: 32),
 

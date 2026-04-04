@@ -13,6 +13,8 @@ import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
+import 'package:learining_portal/utils/app_route_observer.dart';
+import 'package:learining_portal/services/notification_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,7 +26,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RouteAware {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -65,7 +67,40 @@ class _DashboardScreenState extends State<DashboardScreen>
         sendNotifications.loadUnreadNotices();
       };
       _maybeShowPullToRefreshHint();
+      _ensureWebSocketForDashboard();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  /// Inbox/notices use Auth's WebSocket; keep it connected when dashboard is visible.
+  /// Skips while [ChatScreen] owns the socket (same user_id, single server registration).
+  void _ensureWebSocketForDashboard() {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isAuthenticated) return;
+    if (NotificationService().hasOpenChatSession) {
+      return;
+    }
+    auth.ensureWebSocketConnection().catchError((Object e) {
+      debugPrint('Dashboard: Error ensuring WebSocket connection: $e');
+    });
+  }
+
+  @override
+  void didPush() {
+    _ensureWebSocketForDashboard();
+  }
+
+  @override
+  void didPopNext() {
+    _ensureWebSocketForDashboard();
   }
 
   Future<void> _maybeShowPullToRefreshHint() async {
@@ -99,6 +134,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _animationController.dispose();
     super.dispose();
   }
@@ -196,8 +232,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     //   );
     // }
 
-    // Tickets: show for support users (teacher, student, guardian) and admin; only student/guardian/teacher can create (FAB hidden for admin)
-    if (isSupportUserType || userType == UserType.admin) {
+    // Tickets: student, guardian, and admin (not teacher — hidden in Quick Actions for teacher)
+    if ((isSupportUserType && userType != UserType.teacher) ||
+        userType == UserType.admin) {
       items.add(
         DashboardItem(
           icon: Icons.confirmation_number_rounded,

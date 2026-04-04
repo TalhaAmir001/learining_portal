@@ -130,11 +130,17 @@ class DashboardAppBar extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
-          child: Image.asset(
-            'assets/icon/app_icon.jpg',
-            fit: BoxFit.cover,
+          child: Container(
             width: 48,
             height: 48,
+            color: const Color(0xFFD0BDA4),
+            alignment: Alignment.center,
+            child: Image.asset(
+              'assets/icon/app_icon.jpg',
+              fit: BoxFit.contain,
+              width: 43,
+              height: 43,
+            ),
           ),
         ),
       ),

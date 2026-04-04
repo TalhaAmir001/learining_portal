@@ -244,6 +244,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final otherUser = widget.otherUser;
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final showTicketBar = authProvider.userType != UserType.teacher &&
+        authProvider.userType != UserType.admin;
 
     if (otherUser == null && widget.chatId == null) {
       return Scaffold(
@@ -615,7 +618,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
-            const TicketFloatingBar(),
+            if (showTicketBar) const TicketFloatingBar(),
             ChatInputBar(scrollController: _scrollController),
           ],
         ),
