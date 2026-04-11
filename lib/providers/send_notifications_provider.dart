@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:learining_portal/models/notice_board_model.dart';
+import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/notice_board_repository.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
 
@@ -64,18 +65,30 @@ class SendNotificationsProvider with ChangeNotifier {
     final apiUserType = userTypeToApiString(userType);
     int? studentId;
     String? sessionId;
+    int? staffId;
+    final uid = _authProvider?.currentUser?.uid;
     if (userType == UserType.student) {
-      final uid = _authProvider?.currentUser?.uid;
       if (uid != null && uid.isNotEmpty) {
         studentId = int.tryParse(uid);
       }
       final s = _authProvider?.currentUser?.additionalData?['session_id'];
       sessionId = s?.toString();
+    } else if (userType == UserType.teacher || userType == UserType.admin) {
+      if (uid != null && uid.isNotEmpty) {
+        staffId = int.tryParse(uid);
+      }
     }
+    final roleIdsCsv = (userType == UserType.teacher || userType == UserType.admin)
+        ? UserModel.staffNoticeRoleIdsCsv(
+            _authProvider?.currentUser?.additionalData,
+          )
+        : null;
     final list = await NoticeBoardRepository.getSendNotifications(
       userType: apiUserType,
       studentId: studentId,
       sessionId: sessionId,
+      staffId: staffId,
+      roleIdsCsv: roleIdsCsv,
     );
 
     _notices = list.map(NoticeBoardModel.fromSendNotification).toList()
@@ -120,11 +133,19 @@ class SendNotificationsProvider with ChangeNotifier {
       }
     }
 
+    final unreadRoleIdsCsv =
+        (userType == UserType.teacher || userType == UserType.admin)
+            ? UserModel.staffNoticeRoleIdsCsv(
+                _authProvider?.currentUser?.additionalData,
+              )
+            : null;
+
     final list = await NoticeBoardRepository.getUnreadNotifications(
       userType: apiUserType,
       studentId: studentId,
       sessionId: sessionId,
       userId: userId,
+      roleIdsCsv: unreadRoleIdsCsv,
     );
 
     _unreadNotices = list.map(NoticeBoardModel.fromSendNotification).toList()

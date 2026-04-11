@@ -490,9 +490,11 @@ class FCMNotificationHelper {
      * @param int|null $classId
      * @param int|null $sectionId
      * @param int|null $sessionId
+     * @param string|null $sectionIdsCsv
+     * @param int|null $sendNotificationId when set and visible_staff, staff tokens only for notification_roles targets (and staff.role_id / staff_roles)
      * @return array ['student' => string[], 'staff' => string[], 'parent' => string[]] (only requested roles have non-empty arrays)
      */
-    public function getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId = null, $sectionId = null, $sessionId = null, $sectionIdsCsv = null) {
+    public function getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId = null, $sectionId = null, $sessionId = null, $sectionIdsCsv = null, $sendNotificationId = null) {
         $mysqli = $this->getDbConnection();
         $byRole = ['student' => [], 'staff' => [], 'parent' => []];
         if (!$mysqli) {
@@ -543,7 +545,84 @@ class FCMNotificationHelper {
         }
 
         if ($visibleStaff) {
-            $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE user_type = 'staff' AND staff_id IS NOT NULL AND staff_id != 0 AND fcm_token IS NOT NULL AND fcm_token != ''";
+            // create_chat_user.php: teachers = user_type 'teacher' + teacher_id; admins = staff_id + user_type admin/staff.
+            // get_connections fallback: teacher row may use staff_id only. Include both so FCM finds the token row.
+            $flStaffWhere = "(
+                (f.user_type IN ('staff', 'admin') AND f.staff_id IS NOT NULL AND f.staff_id != 0)
+                OR (f.user_type = 'teacher' AND (
+                    (f.teacher_id IS NOT NULL AND f.teacher_id != 0)
+                    OR (f.staff_id IS NOT NULL AND f.staff_id != 0)
+                ))
+            )";
+            $flStaffIdExpr = 'COALESCE(NULLIF(f.staff_id, 0), NULLIF(f.teacher_id, 0))';
+
+            $nid = ($sendNotificationId !== null && (int) $sendNotificationId > 0) ? (int) $sendNotificationId : 0;
+            $useTargetedStaff = false;
+            if ($nid > 0) {
+                $cntRes = $mysqli->query("SELECT COUNT(*) AS c FROM notification_roles WHERE send_notification_id = {$nid}");
+                if ($cntRes && ($cr = $cntRes->fetch_assoc()) && (int) $cr['c'] > 0) {
+                    $useTargetedStaff = true;
+                }
+            }
+            if ($useTargetedStaff) {
+                // Notification.php often inserts role_id 7 alongside specific roles. A bare "nr.role_id = 7" OR
+                // would match every joined row for that notice and notify ALL teachers — wrong.
+                // Match nr.role_id to this device user's roles via staff.role_id and/or staff_roles.staff_id = staff.id.
+                // fl_chat_users may store teachers.id in teacher_id while staff_roles uses staff_id -> staff.id; resolve via teachers.staff_id when that table exists.
+                $chkSr = $mysqli->query("SHOW TABLES LIKE 'staff_roles'");
+                $hasSr = ($chkSr && $chkSr->num_rows > 0);
+                $chkCol = $mysqli->query("SHOW COLUMNS FROM staff LIKE 'role_id'");
+                $hasStaffCol = ($chkCol && $chkCol->num_rows > 0);
+
+                $teachersLinkTable = null;
+                foreach (array('teachers', 'teacher') as $tt) {
+                    $chkT = $mysqli->query("SHOW TABLES LIKE '" . $mysqli->real_escape_string($tt) . "'");
+                    if ($chkT && $chkT->num_rows > 0) {
+                        $chkTs = $mysqli->query('SHOW COLUMNS FROM `' . str_replace('`', '``', $tt) . "` LIKE 'staff_id'");
+                        if ($chkTs && $chkTs->num_rows > 0) {
+                            $teachersLinkTable = $tt;
+                            break;
+                        }
+                    }
+                }
+                $tq = $teachersLinkTable !== null ? ('`' . str_replace('`', '``', $teachersLinkTable) . '`') : '';
+
+                if ($hasSr || $hasStaffCol) {
+                    $matchParts = array();
+                    if ($hasStaffCol) {
+                        $staffIdMatch = 's.id = ' . $flStaffIdExpr;
+                        if ($teachersLinkTable !== null) {
+                            $staffIdMatch = '(' . $staffIdMatch . ' OR EXISTS (SELECT 1 FROM ' . $tq . ' t WHERE t.id = ' . $flStaffIdExpr . ' AND t.staff_id IS NOT NULL AND t.staff_id != 0 AND t.staff_id = s.id))';
+                        }
+                        $matchParts[] = 'EXISTS (SELECT 1 FROM staff s WHERE ' . $staffIdMatch . ' AND IFNULL(s.role_id, 0) > 0 AND CAST(s.role_id AS UNSIGNED) = CAST(nr.role_id AS UNSIGNED))';
+                    }
+                    if ($hasSr) {
+                        $srStaffMatch = 'sr.staff_id = ' . $flStaffIdExpr;
+                        if ($teachersLinkTable !== null) {
+                            $srStaffMatch = '(' . $srStaffMatch . ' OR EXISTS (SELECT 1 FROM ' . $tq . ' t WHERE t.id = ' . $flStaffIdExpr . ' AND t.staff_id IS NOT NULL AND t.staff_id != 0 AND t.staff_id = sr.staff_id))';
+                        }
+                        $matchParts[] = 'EXISTS (SELECT 1 FROM staff_roles sr WHERE sr.role_id IS NOT NULL AND ' . $srStaffMatch . ' AND CAST(sr.role_id AS UNSIGNED) = CAST(nr.role_id AS UNSIGNED))';
+                    }
+                    $matchSql = implode(' OR ', $matchParts);
+                    $sql = "SELECT DISTINCT f.fcm_token FROM fl_chat_users f
+                    INNER JOIN notification_roles nr ON nr.send_notification_id = {$nid}
+                    WHERE {$flStaffWhere}
+                      AND f.fcm_token IS NOT NULL AND TRIM(f.fcm_token) != ''
+                      AND ({$matchSql})";
+                } else {
+                    // Cannot map staff.id -> role_id: do not broadcast to every teacher
+                    $sql = "SELECT fcm_token FROM fl_chat_users WHERE 1 = 0";
+                }
+            }
+            if (!$useTargetedStaff) {
+                $sql = "SELECT DISTINCT fcm_token FROM fl_chat_users WHERE (
+                    (user_type IN ('staff', 'admin') AND staff_id IS NOT NULL AND staff_id != 0)
+                    OR (user_type = 'teacher' AND (
+                        (teacher_id IS NOT NULL AND teacher_id != 0)
+                        OR (staff_id IS NOT NULL AND staff_id != 0)
+                    ))
+                ) AND fcm_token IS NOT NULL AND TRIM(fcm_token) != ''";
+            }
             $result = $mysqli->query($sql);
             if ($result) {
                 while ($row = $result->fetch_assoc()) {
@@ -596,7 +675,7 @@ class FCMNotificationHelper {
      * @return string[] FCM tokens
      */
     public function getFCMTokensForNoticeTarget($visibleStudent, $visibleStaff, $visibleParent) {
-        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent);
+        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, null, null, null, null, null);
         $tokens = array_merge(
             $byRole['student'],
             $byRole['staff'],
@@ -621,7 +700,7 @@ class FCMNotificationHelper {
      * @return array ['success' => bool, 'sent' => int, 'by_role' => ['student' => int, 'staff' => int, 'parent' => int]]
      */
     public function sendNoticeToVisibleRoles($visibleStudent, $visibleStaff, $visibleParent, $title, $body, $notificationId = null, $classId = null, $sectionId = null, $sessionId = null, $sectionIdsCsv = null) {
-        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId, $sectionId, $sessionId, $sectionIdsCsv);
+        $byRole = $this->getFCMTokensForNoticeTargetByRole($visibleStudent, $visibleStaff, $visibleParent, $classId, $sectionId, $sessionId, $sectionIdsCsv, $notificationId);
         // Data-only message: app background handler shows one notification with title "Notice" and body = notice title (no duplicate system notification)
         $data = [
             'type' => 'notice',
@@ -658,8 +737,14 @@ class FCMNotificationHelper {
             return [];
         }
         $sql = "SELECT fcm_token FROM fl_chat_users 
-                WHERE user_type IN ('staff', 'admin') AND staff_id IS NOT NULL AND staff_id != 0 
-                AND fcm_token IS NOT NULL AND fcm_token != ''";
+                WHERE (
+                    (user_type IN ('staff', 'admin') AND staff_id IS NOT NULL AND staff_id != 0)
+                    OR (user_type = 'teacher' AND (
+                        (teacher_id IS NOT NULL AND teacher_id != 0)
+                        OR (staff_id IS NOT NULL AND staff_id != 0)
+                    ))
+                )
+                AND fcm_token IS NOT NULL AND TRIM(fcm_token) != ''";
         $result = $mysqli->query($sql);
         $tokens = [];
         if ($result) {

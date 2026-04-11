@@ -56,6 +56,28 @@ class UserModel {
     return v.toString();
   }
 
+  /// Role ids for notice board APIs (`notification_roles.role_id`). Parses staff login `roles` from PHP:
+  /// e.g. `{"Teacher": "5"}` or `{"5": "Teacher"}`.
+  static String? staffNoticeRoleIdsCsv(Map<String, dynamic>? additionalData) {
+    final raw = additionalData?['roles'];
+    if (raw is! Map) return null;
+    final ids = <int>{};
+    for (final e in raw.entries) {
+      final fromKey = int.tryParse(e.key.toString());
+      if (fromKey != null && fromKey > 0) ids.add(fromKey);
+      final v = e.value;
+      if (v is int && v > 0) {
+        ids.add(v);
+      } else {
+        final fromVal = int.tryParse(v.toString());
+        if (fromVal != null && fromVal > 0) ids.add(fromVal);
+      }
+    }
+    if (ids.isEmpty) return null;
+    final sorted = ids.toList()..sort();
+    return sorted.join(',');
+  }
+
   // Convert UserModel to Firestore document
   Map<String, dynamic> toFirestore() {
     final map = <String, dynamic>{
@@ -100,6 +122,7 @@ class UserModel {
         'created_at',
         'updated_at',
         'childs',
+        'roles',
       ]) {
         if (map[k] != null) extra[k] = map[k];
       }

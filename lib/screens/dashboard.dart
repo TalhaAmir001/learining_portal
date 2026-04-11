@@ -13,6 +13,7 @@ import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
+import 'package:learining_portal/utils/widgets/feature_guide_dialog.dart';
 import 'package:learining_portal/utils/app_route_observer.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:provider/provider.dart';
@@ -37,6 +38,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   static const String _kPullToRefreshHintShownKey =
       'dashboard_pull_to_refresh_hint_shown';
+  static const String _kFeatureGuideShownKey = 'dashboard_feature_guide_shown';
 
   @override
   void initState() {
@@ -70,7 +72,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         sendNotifications.loadNotices();
         sendNotifications.loadUnreadNotices();
       };
-      _maybeShowPullToRefreshHint();
+      _runDashboardOnboardingHints();
       _ensureWebSocketForDashboard();
     });
   }
@@ -113,11 +115,28 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  Future<void> _maybeShowPullToRefreshHint() async {
+  Future<void> _runDashboardOnboardingHints() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final shown = prefs.getBool(_kPullToRefreshHintShownKey) ?? false;
-      if (shown || !mounted) return;
+      final guideShown = prefs.getBool(_kFeatureGuideShownKey) ?? false;
+      if (!guideShown && mounted) {
+        final auth = context.read<AuthProvider>();
+        final isSupportUserType =
+            auth.userType == UserType.teacher ||
+            auth.userType == UserType.student ||
+            auth.userType == UserType.guardian;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => FeatureGuideDialog(
+            isSupportUserType: isSupportUserType,
+          ),
+        );
+        await prefs.setBool(_kFeatureGuideShownKey, true);
+      }
+
+      final pullShown = prefs.getBool(_kPullToRefreshHintShownKey) ?? false;
+      if (pullShown || !mounted) return;
       await prefs.setBool(_kPullToRefreshHintShownKey, true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -451,46 +470,46 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 ),
 
                                 // Footer
-                                const SizedBox(height: 24),
-                                Center(
-                                  child: Wrap(
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    alignment: WrapAlignment.center,
-                                    children: [
-                                      Text(
-                                        'Built by ',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              color: AppColors.textSecondary
-                                                  .withOpacity(0.5),
-                                            ),
-                                      ),
-                                      MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: GestureDetector(
-                                          onTap: _openTechChampGlobal,
-                                          child: Text(
-                                            'TechChamp Global',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                  color: AppColors.primaryBlue,
-                                                  fontWeight: FontWeight.w600,
-                                                  decoration:
-                                                      TextDecoration.underline,
-                                                  decorationColor:
-                                                      AppColors.primaryBlue,
-                                                ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                // const SizedBox(height: 24),
+                                // Center(
+                                //   child: Wrap(
+                                //     crossAxisAlignment:
+                                //         WrapCrossAlignment.center,
+                                //     alignment: WrapAlignment.center,
+                                //     children: [
+                                //       Text(
+                                //         'Built by ',
+                                //         style: Theme.of(context)
+                                //             .textTheme
+                                //             .bodySmall
+                                //             ?.copyWith(
+                                //               color: AppColors.textSecondary
+                                //                   .withOpacity(0.5),
+                                //             ),
+                                //       ),
+                                //       MouseRegion(
+                                //         cursor: SystemMouseCursors.click,
+                                //         child: GestureDetector(
+                                //           onTap: _openTechChampGlobal,
+                                //           child: Text(
+                                //             'TechChamp Global',
+                                //             style: Theme.of(context)
+                                //                 .textTheme
+                                //                 .bodySmall
+                                //                 ?.copyWith(
+                                //                   color: AppColors.primaryBlue,
+                                //                   fontWeight: FontWeight.w600,
+                                //                   decoration:
+                                //                       TextDecoration.underline,
+                                //                   decorationColor:
+                                //                       AppColors.primaryBlue,
+                                //                 ),
+                                //           ),
+                                //         ),
+                                //       ),
+                                //     ],
+                                //   ),
+                                // ),
                               ],
                             ),
                           ),

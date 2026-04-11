@@ -362,12 +362,13 @@ class Notification extends Admin_Controller
 
             $user_array         = array();
             $notice_class_id   = $this->input->post('class_id') ? (int) $this->input->post('class_id') : null;
-            $notice_section_id = $this->input->post('section_id') ? (int) $this->input->post('section_id') : null;
+            $section_ids_arr   = $this->_section_ids_from_post();
+            $notice_section_id = !empty($section_ids_arr) ? (int) $section_ids_arr[0] : null;
 
             foreach($userlisting as $users_key => $users_value) {
                 if ($users_value == "student" || $users_value == "parent") {
-                    if ($notice_class_id && $notice_section_id) {
-                        $userdata_array = $this->student_model->getStudentByClassSectionID($notice_class_id, $notice_section_id);
+                    if ($notice_class_id && !empty($section_ids_arr)) {
+                        $userdata_array = $this->_students_for_class_sections($notice_class_id, $section_ids_arr);
                     } else {
                         $userdata_array = $this->student_model->getStudents();
                     }
@@ -454,6 +455,9 @@ class Notification extends Admin_Controller
             //code end
 
             //***old code as it is for send notification on web application notice board***//
+            // visible[]: "student", "parent", or numeric role_id for staff. Each numeric id becomes notification_roles.role_id.
+            // If role id 7 is not in visible, a row role_id=7 is still inserted so super-admin (role 7) can see the notice on web.
+            // Mobile FCM (fcm_notification_helper) does NOT broadcast role 7 to all staff: only devices whose staff row matches a role_id row get a push.
             $userdata    = $this->customlib->getUserData();
             $student     = "No";
             $staff       = "No";
@@ -491,14 +495,17 @@ class Notification extends Admin_Controller
                 'is_pinned'       => $this->input->post('is_pinned') ? 1 : 0,
                 'days'            => $this->input->post('days') ? trim($this->input->post('days')) : null,
                 'class_id'        => $this->input->post('class_id') ? (int) $this->input->post('class_id') : null,
-                'section_id'      => $this->input->post('section_id') ? (int) $this->input->post('section_id') : null,
+                'section_id'      => $notice_section_id,
+                'section_ids'     => !empty($section_ids_arr) ? implode(',', $section_ids_arr) : null,
             );
 
             $id = $this->notification_model->insertBatch($data, $staff_roles);
-            // Trigger WebSocket broadcast so connected mobile apps refresh the notice board
-            $this->_writePendingNoticeBroadcast($id, $data);
-            // Send FCM push to fl_chat_users (student/staff) and parents by visible_student, visible_staff, visible_parent
-            $this->_sendNoticeFcm($id, $data);
+            if ($id !== false && (int) $id > 0) {
+                // Trigger WebSocket broadcast so connected mobile apps refresh the notice board
+                $this->_writePendingNoticeBroadcast((int) $id, $data);
+                // Send FCM push to fl_chat_users (student/staff) and parents by visible_student, visible_staff, visible_parent
+                $this->_sendNoticeFcm((int) $id, $data);
+            }
             $this->session->set_flashdata('msg', '<div class="alert alert-success">' . $this->lang->line('success_message') . '</div>');
 
             if ($this->input->is_ajax_request()) {
@@ -600,12 +607,13 @@ class Notification extends Admin_Controller
 
             $user_array         = array();
             $notice_class_id   = $this->input->post('class_id') ? (int) $this->input->post('class_id') : null;
-            $notice_section_id = $this->input->post('section_id') ? (int) $this->input->post('section_id') : null;
+            $section_ids_arr   = $this->_section_ids_from_post();
+            $notice_section_id = !empty($section_ids_arr) ? (int) $section_ids_arr[0] : null;
 
             foreach($userlisting as $users_key => $users_value) {
                 if ($users_value == "student" || $users_value == "parent") {
-                    if ($notice_class_id && $notice_section_id) {
-                        $userdata_array = $this->student_model->getStudentByClassSectionID($notice_class_id, $notice_section_id);
+                    if ($notice_class_id && !empty($section_ids_arr)) {
+                        $userdata_array = $this->_students_for_class_sections($notice_class_id, $section_ids_arr);
                     } else {
                         $userdata_array = $this->student_model->getStudents();
                     }
@@ -672,7 +680,7 @@ class Notification extends Admin_Controller
                             $this->smsgateway->sendSMS($user_mail_value['mobileno'], $message, $template_id, "");
                         }
                     }
-                }
+            }
             }
             //mobile app notification will only send to the students
             if(isset($mobile_notification) && $mobile_notification==1){
@@ -688,11 +696,12 @@ class Notification extends Admin_Controller
                             }
                         }
                     }
-                }
+            }
             }
             //code end
 
             //****old code as it is for sending notification on web application no  changes perform on below code****//
+            // Same as add: visible[] drives notification_roles; role 7 auto-insert for web super-admin; FCM matches per-recipient role only (see fcm_notification_helper).
             $userdata    = $this->customlib->getUserData();
             $student     = "No";
             $staff       = "No";
@@ -747,7 +756,8 @@ class Notification extends Admin_Controller
                 'is_pinned'       => $this->input->post('is_pinned') ? 1 : 0,
                 'days'            => $this->input->post('days') ? trim($this->input->post('days')) : null,
                 'class_id'        => $this->input->post('class_id') ? (int) $this->input->post('class_id') : null,
-                'section_id'      => $this->input->post('section_id') ? (int) $this->input->post('section_id') : null,
+                'section_id'      => $notice_section_id,
+                'section_ids'     => !empty($section_ids_arr) ? implode(',', $section_ids_arr) : null,
             );          
          
             if (isset($_FILES["file"]) && $_FILES['file']['name'] != '' && (!empty($_FILES['file']['name']))) {
@@ -765,6 +775,52 @@ class Notification extends Admin_Controller
         $this->load->view('layout/header', $data);
         $this->load->view('admin/notification/notificationEdit', $data);
         $this->load->view('layout/footer', $data);
+    }
+
+    /**
+     * Section IDs from POST: section_id[] multi-select or legacy single section_id.
+     *
+     * @return int[]
+     */
+    private function _section_ids_from_post()
+    {
+        $post = $this->input->post('section_id');
+        if (is_array($post)) {
+            $ids = array_map('intval', $post);
+            $ids = array_filter($ids, function ($id) {
+                return $id > 0;
+            });
+            return array_values(array_unique($ids));
+        }
+        if ($post !== null && $post !== '' && $post !== false) {
+            $id = (int) $post;
+            return $id > 0 ? array($id) : array();
+        }
+        return array();
+    }
+
+    /**
+     * Students in class across multiple sections (deduped by student id).
+     *
+     * @param int   $class_id
+     * @param int[] $section_ids
+     * @return array
+     */
+    private function _students_for_class_sections($class_id, array $section_ids)
+    {
+        if (!$class_id || empty($section_ids)) {
+            return array();
+        }
+        $by_id = array();
+        foreach ($section_ids as $sid) {
+            $batch = $this->student_model->getStudentByClassSectionID($class_id, (int) $sid);
+            if (!empty($batch)) {
+                foreach ($batch as $row) {
+                    $by_id[$row['id']] = $row;
+                }
+            }
+        }
+        return array_values($by_id);
     }
 
     /**
@@ -793,6 +849,7 @@ class Notification extends Admin_Controller
             'visible_parent'   => isset($data['visible_parent']) ? $data['visible_parent'] : 'no',
             'class_id'         => isset($data['class_id']) && $data['class_id'] !== '' ? (int) $data['class_id'] : null,
             'section_id'       => isset($data['section_id']) && $data['section_id'] !== '' ? (int) $data['section_id'] : null,
+            'section_ids'      => isset($data['section_ids']) && $data['section_ids'] !== '' && $data['section_ids'] !== null ? $data['section_ids'] : null,
             'created_by'      => isset($data['created_by']) ? $data['created_by'] : null,
             'created_id'      => isset($data['created_id']) ? $data['created_id'] : null,
             'created_at'      => date('Y-m-d H:i:s'),
@@ -801,8 +858,10 @@ class Notification extends Admin_Controller
     }
 
     /**
-     * Send FCM push for a notice to visible roles (fl_chat_users: student/staff; parents from students.parent_app_key).
-     * Called after adding a notice so push is sent even when form is submitted without AJAX.
+     * Send FCM push for a notice to visible roles.
+     * Uses fcm_notification_helper.php: fl_chat_users teachers use user_type=teacher + teacher_id;
+     * admins/staff use staff_id (must match create_chat_user.php so tokens are found).
+     * Parents: students.parent_app_key.
      *
      * @param int   $id   Notification id (send_notification.id)
      * @param array $data Row with title, message, visible_student, visible_staff, visible_parent
@@ -823,9 +882,10 @@ class Notification extends Admin_Controller
         $visible_parent  = isset($data['visible_parent']) ? (strtolower($data['visible_parent']) === 'yes') : false;
         $class_id        = isset($data['class_id']) && $data['class_id'] !== '' ? (int) $data['class_id'] : null;
         $section_id      = isset($data['section_id']) && $data['section_id'] !== '' ? (int) $data['section_id'] : null;
+        $section_ids_csv = isset($data['section_ids']) && $data['section_ids'] !== '' && $data['section_ids'] !== null ? $data['section_ids'] : null;
         $session_id      = $this->setting_model->getCurrentSession();
         $helper = new FCMNotificationHelper();
-        $helper->sendNoticeToVisibleRoles($visible_student, $visible_staff, $visible_parent, $title, $body, (int) $id, $class_id, $section_id, $session_id);
+        $helper->sendNoticeToVisibleRoles($visible_student, $visible_staff, $visible_parent, $title, $body, (int) $id, $class_id, $section_id, $session_id, $section_ids_csv);
     }
 
     /**
@@ -844,6 +904,7 @@ class Notification extends Admin_Controller
         require_once $helperPath;
 
         $notification_id = $notification_id !== null ? (int) $notification_id : null;
+        $section_ids_csv = null;
 
         if ($notification_id !== null && $notification_id > 0) {
             // Use getById so we load the notice by id only (get() filters by current user role and can return empty)
@@ -859,6 +920,7 @@ class Notification extends Admin_Controller
             $visible_parent  = isset($notice['visible_parent']) ? $notice['visible_parent'] : 'no';
             $class_id       = isset($notice['class_id']) && $notice['class_id'] !== '' ? (int) $notice['class_id'] : null;
             $section_id     = isset($notice['section_id']) && $notice['section_id'] !== '' ? (int) $notice['section_id'] : null;
+            $section_ids_csv = isset($notice['section_ids']) && $notice['section_ids'] !== '' && $notice['section_ids'] !== null ? $notice['section_ids'] : null;
             $session_id     = $this->setting_model->getCurrentSession();
         } else {
             if ($title === null || $body === null) {
@@ -870,6 +932,7 @@ class Notification extends Admin_Controller
         }
 
         $helper = new FCMNotificationHelper();
+        $section_ids_for_fcm = isset($section_ids_csv) ? $section_ids_csv : null;
         $sendResult = $helper->sendNoticeToVisibleRoles(
             strtolower($visible_student) === 'yes',
             strtolower($visible_staff) === 'yes',
@@ -879,7 +942,8 @@ class Notification extends Admin_Controller
             $notification_id,
             $class_id,
             $section_id,
-            isset($session_id) ? $session_id : null
+            isset($session_id) ? $session_id : null,
+            $section_ids_for_fcm
         );
         $errors = isset($sendResult['errors']) ? $sendResult['errors'] : [];
         $firstErrorMsg = null;

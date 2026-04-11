@@ -4,7 +4,8 @@
  * Returns only notices that the current user has NOT read (same visibility and date rules as get_send_notifications).
  * GET or POST: user_type = 'student' | 'staff' | 'parent'
  * - For user_type=student: pass student_id (required), optionally session_id.
- * - For user_type=staff or parent: pass user_id (required) – API id of the current user.
+ * - For user_type=staff or parent: pass user_id (required) – staff.id or parent id.
+ *   Staff list matches notification_roles like get_send_notifications / Notification_model::get().
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -22,6 +23,7 @@ $user_type = isset($_REQUEST['user_type']) ? trim($_REQUEST['user_type']) : null
 $student_id = isset($_REQUEST['student_id']) ? (int) $_REQUEST['student_id'] : null;
 $session_id = isset($_REQUEST['session_id']) ? trim($_REQUEST['session_id']) : null;
 $user_id = isset($_REQUEST['user_id']) ? (int) $_REQUEST['user_id'] : null;
+$role_ids_param = isset($_REQUEST['role_ids']) ? trim((string) $_REQUEST['role_ids']) : '';
 
 if (empty($user_type) || !in_array($user_type, ['student', 'staff', 'parent'])) {
     sendJson([
@@ -52,6 +54,8 @@ if (in_array($user_type, ['staff', 'parent']) && (empty($user_id) || $user_id <=
 
 $mysqli = null;
 try {
+    require_once __DIR__ . '/notice_staff_role_resolve.php';
+
     $mysqli = new mysqli(
         'localhost',
         'portal_beta',
@@ -105,14 +109,25 @@ try {
         } else {
             $sql = "SELECT n.id FROM send_notification n WHERE 1 = 0";
         }
+    } elseif ($user_type === 'staff') {
+        $uid = (int) $user_id;
+        $resolved_roles = notice_resolve_staff_role_ids($mysqli, $uid, $role_ids_param !== '' ? $role_ids_param : null);
+        $nr_join = notice_staff_notification_roles_join($resolved_roles);
+        $rn_join = "LEFT JOIN read_notification rn ON rn.notification_id = n.id AND rn.staff_id = {$uid}";
+        $sql = "SELECT n.id, n.title, n.publish_date, n.date, n.message, n.attachment,
+                n.visible_student, n.visible_staff, n.visible_parent, n.created_id,
+                n.is_pinned, n.days, 0 AS is_read
+                FROM send_notification n
+                {$nr_join}
+                {$rn_join}
+                WHERE n.visible_staff IN ('Yes', 'yes')
+                  AND COALESCE(n.date, n.publish_date) <= CURDATE()
+                  AND (n.days IS NULL OR n.days = '' OR DATEDIFF(CURDATE(), COALESCE(n.date, n.publish_date)) <= CAST(NULLIF(TRIM(n.days), '') AS UNSIGNED))
+                  AND rn.id IS NULL
+                ORDER BY n.is_pinned DESC, n.publish_date DESC, n.id DESC";
     } else {
         $uid = (int) $user_id;
-        $rn_join = "LEFT JOIN read_notification rn ON rn.notification_id = n.id AND ";
-        if ($user_type === 'staff') {
-            $rn_join .= "rn.staff_id = {$uid}";
-        } else {
-            $rn_join .= "rn.parent_id = {$uid}";
-        }
+        $rn_join = "LEFT JOIN read_notification rn ON rn.notification_id = n.id AND rn.parent_id = {$uid}";
         $sql = "SELECT n.id, n.title, n.publish_date, n.date, n.message, n.attachment,
                 n.visible_student, n.visible_staff, n.visible_parent, n.created_id,
                 n.is_pinned, n.days, 0 AS is_read

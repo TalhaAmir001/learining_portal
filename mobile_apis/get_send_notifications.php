@@ -8,6 +8,8 @@
  * GET or POST: user_type = 'student' | 'staff' | 'parent'
  * For user_type=student, pass student_id (and optionally session_id) to filter by class/section:
  *   only notices for all students (class_id/section_id null) or for the student's class/section are returned.
+ * For user_type=staff, pass staff_id (staff.id / same as app uid): notices are limited by notification_roles
+ *   to match Notification_model::get() (role_id 7 = all notices that have any role row; else that role only).
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -25,6 +27,9 @@ function sendJson($data) {
 $user_type = isset($_REQUEST['user_type']) ? trim($_REQUEST['user_type']) : null;
 $student_id = isset($_REQUEST['student_id']) ? (int) $_REQUEST['student_id'] : null;
 $session_id = isset($_REQUEST['session_id']) ? trim($_REQUEST['session_id']) : null;
+$staff_id_param = isset($_REQUEST['staff_id']) ? (int) $_REQUEST['staff_id'] : 0;
+// Comma-separated role ids from app login JSON (same as notification_roles.role_id); required when staff.role_id is empty
+$role_ids_param = isset($_REQUEST['role_ids']) ? trim((string) $_REQUEST['role_ids']) : '';
 
 if (empty($user_type) || !in_array($user_type, ['student', 'staff', 'parent'])) {
     sendJson([
@@ -44,8 +49,19 @@ if ($user_type === 'student' && (empty($student_id) || (int) $student_id <= 0)) 
     exit;
 }
 
+if ($user_type === 'staff' && $staff_id_param <= 0) {
+    sendJson([
+        'success' => false,
+        'error' => 'For user_type=staff, staff_id is required (staff table id) to filter by notification_roles.',
+        'notifications' => []
+    ]);
+    exit;
+}
+
 $mysqli = null;
 try {
+    require_once __DIR__ . '/notice_staff_role_resolve.php';
+
     $mysqli = new mysqli(
         'localhost',
         'portal_beta',
@@ -105,7 +121,22 @@ try {
             // Student has no class/section in student_session: return no notifications
             $sql = "SELECT n.id FROM send_notification n WHERE 1 = 0";
         }
+    } elseif ($user_type === 'staff') {
+        $sid = (int) $staff_id_param;
+        $resolved_roles = notice_resolve_staff_role_ids($mysqli, $sid, $role_ids_param !== '' ? $role_ids_param : null);
+        $nr_join = notice_staff_notification_roles_join($resolved_roles);
+        $sql = "SELECT n.id, n.title, n.publish_date, n.date, n.message, n.attachment,
+                n.visible_student, n.visible_staff, n.visible_parent, n.created_id,
+                n.is_pinned, n.days
+                FROM send_notification n
+                {$nr_join}
+                WHERE n.visible_staff IN ('Yes', 'yes')
+                  AND COALESCE(n.date, n.publish_date) <= CURDATE()
+                  AND (n.days IS NULL OR n.days = '' OR DATEDIFF(CURDATE(), COALESCE(n.date, n.publish_date)) <= CAST(NULLIF(TRIM(n.days), '') AS UNSIGNED))
+                ORDER BY n.is_pinned DESC, n.publish_date DESC, n.id DESC";
+        $add_is_read_zero = true;
     } else {
+        // parent: all visible_parent notices (no notification_roles for parents on web)
         $sql = "SELECT id, title, publish_date, date, message, attachment,
                 visible_student, visible_staff, visible_parent, created_id,
                 is_pinned, days

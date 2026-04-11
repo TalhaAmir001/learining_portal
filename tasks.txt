@@ -18,22 +18,76 @@ remove loading when new message.
 
 double notification fix
 
-notification from admin to parent admin name fix
+notification from admin to parent admin name fix done
 
 add a check before login
 
 remove support ticket and is issue resolved floater bar
 
-also fix top logo done
+also fix top logo
 
-teacher notifications work when come back from chat screen(needs fix)
+lesson_plans
 
-timezone
+request delete account, remove user Id in profile section, remove help and support, guide slideshow for first-time users, digital clock
 
+Database: portal_beta
+ Table: staff_roles
+Browse Browse
+Structure Structure(current)
+SQL SQL
+Search Search
+Insert Insert
+Export Export
+Import Import
+Operations Operations
+Triggers Triggers
+Page-related settings Click on the bar to scroll to top of page
+SQL Query Console Console
+ascendingdescendingOrder:Debug SQLExecution orderTime takenOrder by:Group queries
+Some error occurred while getting SQL debug info.
+OptionsSet default
+Always expand query messages
+Show query history at start
+Show current browsing query
+ Execute queries on Enter and insert new line with Shift+Enter. To make this permanent, view settings.
+Switch to dark theme
+Table structure Table structure
+Relation view Relation view
+#	Name	Type	Collation	Attributes	Null	Default	Comments	Extra	Action
+	1	id Primary	int(11)			No	None		AUTO_INCREMENT	Change Change	Drop Drop	
+	2	role_id Index	int(11)			Yes	NULL			Change Change	Drop Drop	
+	3	staff_id Index	int(11)			Yes	NULL			Change Change	Drop Drop	
+	4	is_active	int(11)			Yes	0			Change Change	Drop Drop	
+	5	created_at	timestamp			No	current_timestamp()			Change Change	Drop Drop	
+	6	updated_at	timestamp			No	current_timestamp()		ON UPDATE CURRENT_TIMESTAMP()	Change Change	Drop Drop	
+With selected:  Check all With selected:
 
-table: sch_settings
-student_height
-staff_barcode
+Table send_notification has been altered successfully.
+ALTER TABLE `send_notification` ADD `class_id` VARCHAR(50) NOT NULL AFTER `days`, ADD `section_id` VARCHAR(50) NOT NULL AFTER `class_id`;
+[ Edit inline ] [ Edit ] [ Create PHP code ]
+Table structure Table structure
+Relation view Relation view
+#	Name	Type	Collation	Attributes	Null	Default	Comments	Extra	Action
+	1	id Primary	int(11)			No	None		AUTO_INCREMENT	Change Change	Drop Drop	
+	2	title	varchar(50)	utf8mb3_general_ci		Yes	NULL			Change Change	Drop Drop	
+	3	publish_date	date			Yes	NULL			Change Change	Drop Drop	
+	4	date	date			Yes	NULL			Change Change	Drop Drop	
+	5	attachment	varchar(500)	utf8mb3_general_ci		Yes	NULL			Change Change	Drop Drop	
+	6	message	text	utf8mb3_general_ci		Yes	NULL			Change Change	Drop Drop	
+	7	visible_student	varchar(10)	utf8mb3_general_ci		No	no			Change Change	Drop Drop	
+	8	visible_staff	varchar(10)	utf8mb3_general_ci		No	no			Change Change	Drop Drop	
+	9	visible_parent	varchar(10)	utf8mb3_general_ci		No	no			Change Change	Drop Drop	
+	10	created_by	varchar(60)	utf8mb3_general_ci		Yes	NULL			Change Change	Drop Drop	
+	11	created_id Index	int(11)			Yes	NULL			Change Change	Drop Drop	
+	12	is_active	varchar(255)	utf8mb3_general_ci		Yes	no			Change Change	Drop Drop	
+	13	is_pinned	tinyint(1)			No	0			Change Change	Drop Drop	
+	14	days	varchar(50)	utf8mb3_general_ci		Yes	NULL			Change Change	Drop Drop	
+	15	class_id	varchar(50)	utf8mb3_general_ci		No	None			Change Change	Drop Drop	
+	16	section_id	varchar(50)	utf8mb3_general_ci		No	None			Change Change	Drop Drop	
+	17	created_at	timestamp			No	current_timestamp()			Change Change	Drop Drop	
+	18	updated_at	timestamp			No	current_timestamp()		ON UPDATE CURRENT_TIMESTAMP()	Change Change	Drop Drop	
+With selected:  Check all With selected:
+
 
 CREATE TABLE `sections` (
   `id` int(11) NOT NULL,

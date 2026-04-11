@@ -26,6 +26,7 @@ if (!defined('ENVIRONMENT')) {
 
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/fcm_notification_helper.php';
+require_once __DIR__ . '/mobile_apis/notice_staff_role_resolve.php';
 
 // Load CodeIgniter database configuration
 // We'll load it in each method to ensure fresh connection
@@ -1460,9 +1461,34 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
+     * Whether this staff user should receive a staff-targeted notice WebSocket broadcast.
+     * Mirrors get_send_notifications.php + notice_staff_notification_roles_join (role 7 = all notices that have notification_roles rows).
+     *
+     * @param int[] $nrRoleIdsForNotice role_id values from notification_roles for this send_notification id
+     * @param int[] $resolvedStaffRoleIds from notice_resolve_staff_role_ids()
+     */
+    private function staffShouldReceiveNoticeBroadcast(array $nrRoleIdsForNotice, array $resolvedStaffRoleIds)
+    {
+        if (empty($nrRoleIdsForNotice)) {
+            return true;
+        }
+        if (in_array(7, $resolvedStaffRoleIds, true)) {
+            return true;
+        }
+        foreach ($resolvedStaffRoleIds as $rid) {
+            if (in_array((int) $rid, $nrRoleIdsForNotice, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Check for pending notice broadcast file (written by CodeIgniter when a new notice is added)
      * and broadcast new_notice to connected clients. For student user_type only: when the notice
      * has class_id and section_id, only students in that class/section receive the broadcast.
+     * For staff-visible notices: only staff/admin/teacher connections whose roles match notification_roles
+     * (same rules as get_send_notifications.php / FCM), so teachers do not get admin-only notices.
      * Clients should refresh their full notice list (get_send_notifications) and unread list
      * (get_unread_notifications) when they receive this so the dashboard notice box updates in real time.
      */
@@ -1515,6 +1541,24 @@ class ChatWebSocketServer implements MessageComponentInterface
             }
         }
 
+        $mysqliStaffNotice = null;
+        $nrRoleIdsForNotice = array();
+        if ($visible_staff && isset($data['id']) && (int) $data['id'] > 0) {
+            $mysqliStaffNotice = $this->getDbConnection();
+            if ($mysqliStaffNotice) {
+                $nid = (int) $data['id'];
+                $resNr = $mysqliStaffNotice->query('SELECT role_id FROM notification_roles WHERE send_notification_id = ' . $nid);
+                if ($resNr) {
+                    while ($r = $resNr->fetch_assoc()) {
+                        $rid = isset($r['role_id']) ? (int) $r['role_id'] : 0;
+                        if ($rid > 0) {
+                            $nrRoleIdsForNotice[] = $rid;
+                        }
+                    }
+                }
+            }
+        }
+
         $count = 0;
         foreach ($this->clients as $client) {
             $user_id   = isset($client->user_id) ? $client->user_id : null;
@@ -1524,16 +1568,25 @@ class ChatWebSocketServer implements MessageComponentInterface
                 continue;
             }
 
+            $ut = strtolower(trim((string) $user_type));
             $send = false;
-            if ($user_type === 'staff' && $visible_staff) {
-                $send = true;
-            } elseif ($user_type === 'student' && $visible_student) {
+            if ($visible_staff && in_array($ut, array('staff', 'admin', 'teacher'), true)) {
+                if ($mysqliStaffNotice === null) {
+                    $send = false;
+                } else {
+                    $sid = (int) $user_id;
+                    if ($sid > 0) {
+                        $resolved = notice_resolve_staff_role_ids($mysqliStaffNotice, $sid, null);
+                        $send = $this->staffShouldReceiveNoticeBroadcast($nrRoleIdsForNotice, $resolved);
+                    }
+                }
+            } elseif ($ut === 'student' && $visible_student) {
                 if ($allowed_student_ids === null) {
                     $send = true;
                 } elseif (isset($allowed_student_ids[(string) $user_id])) {
                     $send = true;
                 }
-            } elseif ($user_type === 'parent' && $visible_parent) {
+            } elseif (($ut === 'parent' || $ut === 'guardian') && $visible_parent) {
                 $send = true;
             }
 
@@ -1545,6 +1598,9 @@ class ChatWebSocketServer implements MessageComponentInterface
                     echo "Broadcast new_notice to client failed: " . $e->getMessage() . "\n";
                 }
             }
+        }
+        if ($mysqliStaffNotice) {
+            $mysqliStaffNotice->close();
         }
         echo "Broadcast new_notice to {$count} client(s)\n";
         @unlink($path);

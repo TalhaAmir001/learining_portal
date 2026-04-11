@@ -10,11 +10,15 @@ class NoticeBoardRepository {
   /// [userType] - 'student' | 'staff' | 'parent'
   /// For userType 'student', pass [studentId] (and optionally [sessionId]) so the API
   /// returns only notices for all students or for the student's class/section.
+  /// For userType 'staff', pass [staffId] (staff.id, same as app uid) and [roleIdsCsv]
+  /// (comma-separated ids from login `roles` map) so notices match [notification_roles].
   /// Returns list of SendNotificationDataModel; empty on error.
   static Future<List<SendNotificationDataModel>> getSendNotifications({
     required String userType,
     int? studentId,
     String? sessionId,
+    int? staffId,
+    String? roleIdsCsv,
   }) async {
     try {
       final queryParams = <String, String>{'user_type': userType};
@@ -23,6 +27,12 @@ class NoticeBoardRepository {
         // if (sessionId != null && sessionId.isNotEmpty) {
         //   queryParams['session_id'] = sessionId;
         // }
+      }
+      if (userType == 'staff' && staffId != null && staffId > 0) {
+        queryParams['staff_id'] = staffId.toString();
+        if (roleIdsCsv != null && roleIdsCsv.isNotEmpty) {
+          queryParams['role_ids'] = roleIdsCsv;
+        }
       }
       // Use GET so redirects (e.g. auth) do not lose the body; server accepts user_type from query
       final response = await ApiClient.get(
@@ -93,6 +103,7 @@ class NoticeBoardRepository {
     int? studentId,
     String? sessionId,
     int? userId,
+    String? roleIdsCsv,
   }) async {
     try {
       final queryParams = <String, String>{'user_type': userType};
@@ -107,6 +118,11 @@ class NoticeBoardRepository {
           userId != null &&
           userId > 0) {
         queryParams['user_id'] = userId.toString();
+        if (userType == 'staff' &&
+            roleIdsCsv != null &&
+            roleIdsCsv.isNotEmpty) {
+          queryParams['role_ids'] = roleIdsCsv;
+        }
       }
       final response = await ApiClient.get(
         endpoint: '/mobile_apis/get_unread_notifications.php',
