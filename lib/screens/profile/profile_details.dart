@@ -287,11 +287,6 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                               label: 'Display name',
                               value: user.displayName!,
                             ),
-                          _InfoRow(
-                            icon: Icons.fingerprint,
-                            label: 'User ID',
-                            value: user.uid,
-                          ),
                         ],
                       ),
                     ),
@@ -331,23 +326,23 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                   ),
 
                   // Additional data (from API: admission_no, session_id, employee_id, etc.)
-                  if (user.additionalData != null &&
-                      user.additionalData!.isNotEmpty) ...[
-                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
-                    SliverToBoxAdapter(
-                      child: _SectionHeader(title: 'Additional details'),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: isTablet ? 24 : 16,
-                        ),
-                        child: _InfoCard(
-                          children: _additionalDataRows(user.additionalData!),
-                        ),
-                      ),
-                    ),
-                  ],
+                  // if (user.additionalData != null &&
+                  //     user.additionalData!.isNotEmpty) ...[
+                  //   const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                  //   SliverToBoxAdapter(
+                  //     child: _SectionHeader(title: 'Additional details'),
+                  //   ),
+                  //   SliverToBoxAdapter(
+                  //     child: Padding(
+                  //       padding: EdgeInsets.symmetric(
+                  //         horizontal: isTablet ? 24 : 16,
+                  //       ),
+                  //       child: _InfoCard(
+                  //         children: _additionalDataRows(user.additionalData!),
+                  //       ),
+                  //     ),
+                  //   ),
+                  // ],
 
                   const SliverToBoxAdapter(child: SizedBox(height: 32)),
                 ],
@@ -390,7 +385,6 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       'dob': 'Date of birth',
       'guardian_name': 'Guardian name',
       'username': 'Username',
-      'user_id': 'User ID (API)',
       'is_active': 'Active',
       'created_at': 'Created (API)',
       'updated_at': 'Updated (API)',
@@ -400,7 +394,12 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
     };
     final icon = Icons.info_outline_rounded;
     return data.entries
-        .where((e) => e.value != null && e.value.toString().trim().isNotEmpty)
+        .where(
+          (e) =>
+              e.key != 'user_id' &&
+              e.value != null &&
+              e.value.toString().trim().isNotEmpty,
+        )
         .map((e) {
           final label = labels[e.key] ?? e.key.replaceAll('_', ' ');
           final value = e.value is bool

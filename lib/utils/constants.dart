@@ -13,3 +13,7 @@ const String supportUserId = '0';
 /// [SharedPreferences] key for the logged-in app role (`student` | `guardian` | `teacher` | `admin`).
 /// Used by background FCM so chat notification titles match in-app rules (e.g. "Support" for non-admins).
 const String prefsKeyUserType = 'current_user_type';
+
+/// Opened from the dashboard profile menu (“Request delete account”). Set to your live form or policy URL.
+const String accountDeletionRequestUrl =
+    'https://portal.gcsewithrosi.co.uk/request-account-deletion';

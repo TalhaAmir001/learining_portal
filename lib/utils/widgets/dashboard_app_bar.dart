@@ -3,7 +3,9 @@ import 'package:learining_portal/providers/auth_provider.dart';
 import 'package:learining_portal/screens/profile/profile_details.dart';
 import 'package:learining_portal/screens/profile/settings.dart';
 import 'package:learining_portal/utils/app_colors.dart';
+import 'package:learining_portal/utils/constants.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DashboardAppBar extends StatelessWidget {
   final String schoolName;
@@ -450,12 +452,12 @@ class DashboardAppBar extends StatelessWidget {
               },
             ),
             _buildMenuItem(
-              icon: Icons.help_outline_rounded,
-              title: 'Help & Support',
+              icon: Icons.delete_outline_rounded,
+              title: 'Request delete account',
               color: AppColors.accentTeal,
               onTap: () {
                 Navigator.pop(context);
-                // Navigate to help
+                _openAccountDeletionUrl(context);
               },
             ),
 
@@ -522,6 +524,29 @@ class DashboardAppBar extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  Future<void> _openAccountDeletionUrl(BuildContext context) async {
+    final uri = Uri.parse(accountDeletionRequestUrl);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the link. Please try again later.'),
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the link. Please try again later.'),
+          ),
+        );
+      }
+    }
   }
 
   void _showLogoutConfirmation(BuildContext context) {
