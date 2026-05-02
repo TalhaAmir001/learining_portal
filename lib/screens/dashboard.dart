@@ -10,6 +10,7 @@ import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/feedback/daily_feedback_screen.dart';
 import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
+import 'package:learining_portal/screens/student_information/student_information_hub_screen.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
@@ -214,6 +215,27 @@ class _DashboardScreenState extends State<DashboardScreen>
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const InboxScreen()),
+            );
+          },
+        ),
+      );
+    }
+
+    if (userType == UserType.admin) {
+      items.add(
+        DashboardItem(
+          icon: Icons.school_rounded,
+          title: 'Student Informations',
+          color: AppColors.primaryBlue,
+          gradient: const LinearGradient(
+            colors: [AppColors.primaryBlue, AppColors.accentTeal],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const StudentInformationHubScreen(),
+              ),
             );
           },
         ),
