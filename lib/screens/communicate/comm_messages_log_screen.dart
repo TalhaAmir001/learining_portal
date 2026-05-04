@@ -65,15 +65,12 @@ class _CommMessagesLogScreenState extends State<CommMessagesLogScreen> {
               itemCount: list.length,
               itemBuilder: (context, i) {
                 final m = list[i];
-                final sub = [
-                  if (m.sendThrough.isNotEmpty) m.sendThrough,
-                  if (m.sendTo.isNotEmpty) m.sendTo,
-                  m.preview,
-                ].where((e) => e.isNotEmpty).join('\n');
+                final sub = m.logCardSubtitle;
                 return SiResultCard(
                   title: m.title.isNotEmpty ? m.title : 'Message #${m.id}',
                   subtitle: sub.isNotEmpty ? sub : '—',
-                  leadingIcon: m.sendThrough.toLowerCase().contains('sms')
+                  leadingIcon: m.channelsSummary.toLowerCase().contains('sms') &&
+                          !m.channelsSummary.toLowerCase().contains('email')
                       ? Icons.sms_outlined
                       : Icons.email_outlined,
                   onTap: () {

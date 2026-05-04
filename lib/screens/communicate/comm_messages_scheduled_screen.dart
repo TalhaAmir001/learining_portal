@@ -65,11 +65,7 @@ class _CommMessagesScheduledScreenState extends State<CommMessagesScheduledScree
               itemCount: list.length,
               itemBuilder: (context, i) {
                 final m = list[i];
-                final sub = [
-                  if (m.scheduleDateTime.isNotEmpty) m.scheduleDateTime,
-                  if (m.sendTo.isNotEmpty) m.sendTo,
-                  m.preview,
-                ].where((e) => e.isNotEmpty).join('\n');
+                final sub = m.logCardSubtitle;
                 return SiResultCard(
                   title: m.title.isNotEmpty ? m.title : 'Message #${m.id}',
                   subtitle: sub.isNotEmpty ? sub : '—',

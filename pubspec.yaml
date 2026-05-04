@@ -54,6 +54,9 @@ dependencies:
   flutter_launcher_icons: ^0.14.4
   record: ^6.2.0
   just_audio: ^0.10.5
+  html_unescape: ^2.0.0
+  html_editor_enhanced: ^2.7.1
+  mailer: ^7.1.0
 
 dev_dependencies:
   flutter_test:

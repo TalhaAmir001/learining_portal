@@ -84,4 +84,13 @@ class CommunicateRepository {
       return null;
     }
   }
+
+  /// Composes and sends (or schedules) bulk email via `post_comm_send_email.php`.
+  static Future<Map<String, dynamic>> sendEmailCompose(Map<String, dynamic> body) async {
+    final r = await ApiClient.postJson(
+      endpoint: '/mobile_apis/post_comm_send_email.php',
+      body: body,
+    );
+    return r;
+  }
 }

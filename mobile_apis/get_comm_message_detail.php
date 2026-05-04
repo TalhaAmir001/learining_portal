@@ -15,6 +15,70 @@ function comm_send_json($data) {
     }
 }
 
+/**
+ * Resolve messages.schedule_class / schedule_section (JSON ids) to display names (web: classes.class, sections.section).
+ *
+ * @return array{0: string, 1: string} [className, sectionNamesCsv]
+ */
+function comm_resolve_schedule_labels(mysqli $mysqli, $scheduleClass, $scheduleSectionRaw) {
+    $className = '';
+    $sectionNames = '';
+
+    $cid = isset($scheduleClass) ? (int) $scheduleClass : 0;
+    if ($cid > 0) {
+        $st = $mysqli->prepare('SELECT `class` FROM classes WHERE id = ? LIMIT 1');
+        if ($st) {
+            $st->bind_param('i', $cid);
+            $st->execute();
+            $res = $st->get_result();
+            if ($res && ($r = $res->fetch_assoc())) {
+                $className = isset($r['class']) ? trim((string) $r['class']) : '';
+            }
+            $st->close();
+        }
+    }
+
+    $secIds = [];
+    $raw = is_string($scheduleSectionRaw) ? trim($scheduleSectionRaw) : '';
+    if ($raw !== '' && strpos($raw, '[') === 0) {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $sid) {
+                $i = (int) $sid;
+                if ($i > 0) {
+                    $secIds[] = $i;
+                }
+            }
+        }
+    } elseif ($raw !== '') {
+        foreach (explode(',', $raw) as $p) {
+            $i = (int) trim($p);
+            if ($i > 0) {
+                $secIds[] = $i;
+            }
+        }
+    }
+    $secIds = array_values(array_unique($secIds));
+    if (!empty($secIds)) {
+        $in = implode(',', array_map('intval', $secIds));
+        $qs = $mysqli->query(
+            'SELECT `section` FROM sections WHERE id IN (' . $in . ') ORDER BY `section` ASC'
+        );
+        if ($qs) {
+            $names = [];
+            while ($r = $qs->fetch_assoc()) {
+                $n = isset($r['section']) ? trim((string) $r['section']) : '';
+                if ($n !== '') {
+                    $names[] = $n;
+                }
+            }
+            $sectionNames = implode(', ', $names);
+        }
+    }
+
+    return [$className, $sectionNames];
+}
+
 $mysqli = null;
 try {
     $mysqli = new mysqli(
@@ -49,6 +113,11 @@ try {
         exit;
     }
     $row = $result->fetch_assoc();
+    $labels = comm_resolve_schedule_labels(
+        $mysqli,
+        $row['schedule_class'] ?? null,
+        $row['schedule_section'] ?? ''
+    );
     $out = [
         'id' => (int) $row['id'],
         'title' => $row['title'] ?? '',
@@ -68,6 +137,8 @@ try {
         'send_to' => $row['send_to'] ?? '',
         'schedule_class' => isset($row['schedule_class']) ? (int) $row['schedule_class'] : null,
         'schedule_section' => $row['schedule_section'] ?? '',
+        'schedule_class_name' => $labels[0],
+        'schedule_section_names' => $labels[1],
         'created_at' => $row['created_at'] ?? '',
         'updated_at' => $row['updated_at'] ?? '',
     ];

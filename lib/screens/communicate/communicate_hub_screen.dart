@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:learining_portal/screens/communicate/comm_email_templates_screen.dart';
 import 'package:learining_portal/screens/communicate/comm_messages_log_screen.dart';
 import 'package:learining_portal/screens/communicate/comm_messages_scheduled_screen.dart';
+import 'package:learining_portal/screens/communicate/comm_send_email_screen.dart';
 import 'package:learining_portal/screens/communicate/comm_sms_templates_screen.dart';
 import 'package:learining_portal/screens/student_information/si_web_only_feature_screen.dart';
 import 'package:learining_portal/screens/student_information/widgets/si_chrome.dart';
@@ -63,13 +64,9 @@ class CommunicateHubScreen extends StatelessWidget {
       _HubEntry(
         icon: Icons.mark_email_read_outlined,
         title: 'Send Email',
-        subtitle: 'Compose on web admin',
+        subtitle: 'Class, sections, or individual addresses',
         gradient: _gradients[1],
-        builder: (_) => const SiWebOnlyFeatureScreen(
-          title: 'Send Email',
-          body:
-              'Composing and sending bulk email uses the full web admin workflow (recipients, attachments, templates). Please use the school portal in a browser.',
-        ),
+        builder: (_) => const CommSendEmailScreen(),
       ),
       _HubEntry(
         icon: Icons.send_rounded,
