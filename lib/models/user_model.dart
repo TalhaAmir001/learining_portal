@@ -48,12 +48,26 @@ class UserModel {
     return displayName ?? email.split('@')[0];
   }
 
-  /// API id (e.g. parent id for guardian). Use this for guardian feedback and fl_chat_users.parent_id.
+  /// API id (e.g. parent id for guardian, staff row id for admin/teacher when set in [additionalData]).
   String? get id {
     final v = additionalData?['id'];
     if (v == null) return null;
     if (v is int) return v.toString();
     return v.toString();
+  }
+
+  /// Portal `staff.id` for download-center / share mobile APIs (`upload_by`, `created_by`).
+  /// Uses [additionalData] `staff_id` / `id` from staff login; if missing (e.g. older Firestore doc), [uid] for admin/teacher.
+  int? get portalStaffId {
+    if (userType != UserType.admin && userType != UserType.teacher) {
+      return null;
+    }
+    final raw = additionalData?['staff_id'] ?? additionalData?['id'];
+    if (raw != null) {
+      final n = raw is int ? raw : int.tryParse(raw.toString());
+      if (n != null && n > 0) return n;
+    }
+    return int.tryParse(uid);
   }
 
   /// Role ids for notice board APIs (`notification_roles.role_id`). Parses staff login `roles` from PHP:
@@ -110,6 +124,7 @@ class UserModel {
       final extra = <String, dynamic>{};
       for (final k in [
         'id',
+        'staff_id',
         'user_id',
         'username',
         'admission_no',
@@ -202,8 +217,10 @@ class UserModel {
       lastName = result.surname;
     }
 
-    // Build additional data from admin result
+    // Build additional data from admin result (id matches portal `staff.id` for APIs)
     final additionalData = <String, dynamic>{
+      'id': result.id,
+      'staff_id': result.id,
       'employee_id': result.employeeId,
       'department': result.department,
       'designation': result.designation,

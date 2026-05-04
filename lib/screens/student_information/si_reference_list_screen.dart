@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:learining_portal/network/data_models/student_information/student_information_models.dart';
 import 'package:learining_portal/network/domain/student_information_repository.dart';
+import 'package:learining_portal/screens/student_information/widgets/si_chrome.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 
 enum SiReferenceKind { categories, houses, reasons }
@@ -36,6 +37,28 @@ class _SiReferenceListScreenState extends State<SiReferenceListScreen> {
     }
   }
 
+  String get _subtitle {
+    switch (widget.kind) {
+      case SiReferenceKind.categories:
+        return 'Fee and demographic categories';
+      case SiReferenceKind.houses:
+        return 'House names for student grouping';
+      case SiReferenceKind.reasons:
+        return 'Reasons used when disabling students';
+    }
+  }
+
+  IconData get _listIcon {
+    switch (widget.kind) {
+      case SiReferenceKind.categories:
+        return Icons.category_rounded;
+      case SiReferenceKind.houses:
+        return Icons.house_rounded;
+      case SiReferenceKind.reasons:
+        return Icons.rule_folder_rounded;
+    }
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -47,9 +70,10 @@ class _SiReferenceListScreenState extends State<SiReferenceListScreen> {
           final list = await StudentInformationRepository.getCategories();
           _rows = list
               .map(
-                (SiCategoryModel e) => ListTile(
-                  title: Text(e.category.isEmpty ? '(unnamed)' : e.category),
-                  subtitle: Text('ID: ${e.id}'),
+                (SiCategoryModel e) => SiReadOnlyListCard(
+                  title: e.category.isEmpty ? '(unnamed)' : e.category,
+                  meta: 'ID ${e.id}',
+                  icon: _listIcon,
                 ),
               )
               .toList();
@@ -58,9 +82,10 @@ class _SiReferenceListScreenState extends State<SiReferenceListScreen> {
           final list = await StudentInformationRepository.getSchoolHouses();
           _rows = list
               .map(
-                (SiSchoolHouseModel e) => ListTile(
-                  title: Text(e.houseName.isEmpty ? '(unnamed)' : e.houseName),
-                  subtitle: Text('ID: ${e.id}'),
+                (SiSchoolHouseModel e) => SiReadOnlyListCard(
+                  title: e.houseName.isEmpty ? '(unnamed)' : e.houseName,
+                  meta: 'ID ${e.id}',
+                  icon: _listIcon,
                 ),
               )
               .toList();
@@ -69,9 +94,10 @@ class _SiReferenceListScreenState extends State<SiReferenceListScreen> {
           final list = await StudentInformationRepository.getDisableReasons();
           _rows = list
               .map(
-                (SiDisableReasonModel e) => ListTile(
-                  title: Text(e.reason.isEmpty ? '(empty)' : e.reason),
-                  subtitle: Text('ID: ${e.id}'),
+                (SiDisableReasonModel e) => SiReadOnlyListCard(
+                  title: e.reason.isEmpty ? '(empty)' : e.reason,
+                  meta: 'ID ${e.id}',
+                  icon: _listIcon,
                 ),
               )
               .toList();
@@ -91,34 +117,32 @@ class _SiReferenceListScreenState extends State<SiReferenceListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_title),
-        backgroundColor: AppColors.primaryBlue,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _loading ? null : _load,
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
+    return SiThemedPageScaffold(
+      title: _title,
+      subtitle: _subtitle,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          color: Colors.white,
+          onPressed: _loading ? null : _load,
+        ),
+      ],
+      child: _loading
+          ? const SiLoadingBlock(message: 'Loading…')
           : _error != null && _rows.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
-                  ),
+              ? SiEmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: 'Nothing to show',
+                  message: _error!,
                 )
               : RefreshIndicator(
+                  color: AppColors.primaryBlue,
                   onRefresh: _load,
-                  child: ListView(children: _rows),
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                    children: _rows,
+                  ),
                 ),
     );
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:learining_portal/network/data_models/student_information/student_information_models.dart';
 import 'package:learining_portal/network/domain/student_information_repository.dart';
 import 'package:learining_portal/screens/student_information/si_student_detail_screen.dart';
+import 'package:learining_portal/screens/student_information/widgets/si_chrome.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 
 class SiDisabledStudentsScreen extends StatefulWidget {
@@ -63,9 +64,7 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
 
   Future<void> _searchByClass() async {
     if (_classId == null || _classId! <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please choose a class.')),
-      );
+      SiChrome.showMessage(context, 'Please choose a class.');
       return;
     }
     setState(() => _listLoading = true);
@@ -80,18 +79,14 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
       _listLoading = false;
     });
     if (rows.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No disabled students found.')),
-      );
+      SiChrome.showMessage(context, 'No disabled students found.');
     }
   }
 
   Future<void> _searchByKeyword() async {
     final q = _keywordCtrl.text.trim();
     if (q.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter at least 2 characters.')),
-      );
+      SiChrome.showMessage(context, 'Enter at least 2 characters.');
       return;
     }
     FocusScope.of(context).unfocus();
@@ -106,33 +101,42 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
       _listLoading = false;
     });
     if (rows.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No disabled students found.')),
-      );
+      SiChrome.showMessage(context, 'No disabled students found.');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Disabled Students'),
-        backgroundColor: AppColors.primaryBlue,
-        foregroundColor: Colors.white,
-        bottom: TabBar(
-          controller: _tabs,
-          indicatorColor: Colors.white,
-          tabs: const [
-            Tab(text: 'By class'),
-            Tab(text: 'By keyword'),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabs,
+    return SiThemedPageScaffold(
+      title: 'Disabled Students',
+      subtitle: 'Students marked inactive in the directory',
+      child: Column(
         children: [
-          _classTab(),
-          _keywordTab(),
+          Material(
+            color: AppColors.surfaceWhite,
+            child: TabBar(
+              controller: _tabs,
+              indicatorColor: AppColors.accentTeal,
+              indicatorWeight: 3,
+              labelColor: AppColors.primaryBlue,
+              unselectedLabelColor: AppColors.textSecondary,
+              labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              tabs: const [
+                Tab(text: 'By class'),
+                Tab(text: 'By keyword'),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _classTab(),
+                _keywordTab(),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -140,21 +144,18 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
 
   Widget _classTab() {
     if (_mastersLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const SiLoadingBlock(message: 'Loading classes…');
     }
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               DropdownButtonFormField<int>(
                 isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Class',
-                  border: OutlineInputBorder(),
-                ),
+                decoration: SiChrome.inputDecoration(context, labelText: 'Class'),
                 value: _classId,
                 items: _classes
                     .map(
@@ -173,9 +174,9 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
               const SizedBox(height: 12),
               DropdownButtonFormField<int?>(
                 isExpanded: true,
-                decoration: const InputDecoration(
+                decoration: SiChrome.inputDecoration(
+                  context,
                   labelText: 'Section (optional)',
-                  border: OutlineInputBorder(),
                 ),
                 value: _sectionId == 0 ? null : _sectionId,
                 items: [
@@ -198,20 +199,27 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
                   setState(() => _sectionId = v ?? 0);
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               FilledButton.icon(
                 onPressed: _listLoading ? null : _searchByClass,
                 icon: _listLoading
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Icon(Icons.search_rounded),
                 label: const Text('Search'),
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
                   foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
               ),
             ],
@@ -227,33 +235,41 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: TextField(
                   controller: _keywordCtrl,
                   textInputAction: TextInputAction.search,
                   onSubmitted: (_) => _searchByKeyword(),
-                  decoration: const InputDecoration(
+                  decoration: SiChrome.inputDecoration(
+                    context,
                     labelText: 'Search disabled students',
-                    border: OutlineInputBorder(),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: _listLoading ? null : _searchByKeyword,
-                icon: _listLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.search_rounded),
-                style: IconButton.styleFrom(
-                  backgroundColor: AppColors.primaryBlue,
-                  foregroundColor: Colors.white,
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: IconButton.filled(
+                  onPressed: _listLoading ? null : _searchByKeyword,
+                  icon: _listLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.search_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.secondaryPurple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.all(14),
+                  ),
                 ),
               ),
             ],
@@ -267,38 +283,47 @@ class _SiDisabledStudentsScreenState extends State<SiDisabledStudentsScreen>
 
   Widget _resultList() {
     if (_results.isEmpty) {
-      return Center(
-        child: Text(
-          'Results appear here after you search.',
-          style: TextStyle(color: AppColors.textSecondary),
-        ),
+      return SiEmptyState(
+        icon: Icons.person_off_outlined,
+        title: 'No results yet',
+        message:
+            'Search by class/section or keyword to list inactive student records.',
       );
     }
-    return ListView.separated(
-      itemCount: _results.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, i) {
-        final r = _results[i];
-        return ListTile(
-          title: Text(
-            r.displayName.isEmpty ? 'Student #${r.studentId}' : r.displayName,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          subtitle: Text(
-            '${r.className} ${r.sectionName}\nReason: ${r.disReason.isEmpty ? '—' : r.disReason}',
-          ),
-          isThreeLine: true,
-          trailing: const Icon(Icons.chevron_right_rounded),
-          onTap: () {
-            Navigator.push<void>(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => SiStudentDetailScreen(studentId: r.studentId),
-              ),
-            );
-          },
-        );
+    return RefreshIndicator(
+      color: AppColors.primaryBlue,
+      onRefresh: () async {
+        if (_tabs.index == 0 && _classId != null && _classId! > 0) {
+          await _searchByClass();
+        } else if (_tabs.index == 1 && _keywordCtrl.text.trim().length >= 2) {
+          await _searchByKeyword();
+        }
       },
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        itemCount: _results.length,
+        itemBuilder: (context, i) {
+          final r = _results[i];
+          final title =
+              r.displayName.isEmpty ? 'Student #${r.studentId}' : r.displayName;
+          final subtitle =
+              '${r.className} ${r.sectionName}\nReason: ${r.disReason.isEmpty ? '—' : r.disReason}';
+          return SiResultCard(
+            title: title,
+            subtitle: subtitle,
+            leadingIcon: Icons.person_off_rounded,
+            onTap: () {
+              Navigator.push<void>(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => SiStudentDetailScreen(studentId: r.studentId),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:learining_portal/network/data_models/student_information/student_information_models.dart';
 import 'package:learining_portal/network/domain/student_information_repository.dart';
 import 'package:learining_portal/screens/student_information/si_student_detail_screen.dart';
+import 'package:learining_portal/screens/student_information/widgets/si_chrome.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 
 class SiMulticlassScreen extends StatefulWidget {
@@ -51,9 +52,7 @@ class _SiMulticlassScreenState extends State<SiMulticlassScreen> {
 
   Future<void> _load() async {
     if (_classId == null || _sectionId == null || _sectionId! <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select class and section.')),
-      );
+      SiChrome.showMessage(context, 'Select class and section.');
       return;
     }
     setState(() => _listLoading = true);
@@ -67,36 +66,32 @@ class _SiMulticlassScreenState extends State<SiMulticlassScreen> {
       _listLoading = false;
     });
     if (list.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No multi-class students in this class/section.')),
+      SiChrome.showMessage(
+        context,
+        'No multi-class students in this class/section.',
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Multi Class Student'),
-        backgroundColor: AppColors.primaryBlue,
-        foregroundColor: Colors.white,
-      ),
-      body: _mastersLoading
-          ? const Center(child: CircularProgressIndicator())
+    return SiThemedPageScaffold(
+      title: 'Multi Class Student',
+      subtitle: 'Students with more than one enrollment this year',
+      child: _mastersLoading
+          ? const SiLoadingBlock(message: 'Loading classes…')
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<int>(
                         isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Class',
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration:
+                            SiChrome.inputDecoration(context, labelText: 'Class'),
                         value: _classId,
                         items: _classes
                             .map(
@@ -115,10 +110,8 @@ class _SiMulticlassScreenState extends State<SiMulticlassScreen> {
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(
                         isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Section',
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration:
+                            SiChrome.inputDecoration(context, labelText: 'Section'),
                         value: _sectionId,
                         items: _sections
                             .map(
@@ -136,85 +129,148 @@ class _SiMulticlassScreenState extends State<SiMulticlassScreen> {
                           setState(() => _sectionId = v);
                         },
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 18),
                       FilledButton.icon(
                         onPressed: _listLoading ? null : _load,
                         icon: _listLoading
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
-                            : const Icon(Icons.search_rounded),
+                            : const Icon(Icons.groups_rounded),
                         label: const Text('Load students'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.primaryBlue,
+                          backgroundColor: AppColors.accentTeal,
                           foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
                 const Divider(height: 1),
-                Expanded(
-                  child: _rows.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Choose class and section, then load.',
-                            style: TextStyle(color: AppColors.textSecondary),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _rows.length,
-                          itemBuilder: (context, i) {
-                            final r = _rows[i];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              child: ExpansionTile(
-                                title: Text(
-                                  r.displayName.isEmpty
-                                      ? 'Student #${r.studentId}'
-                                      : r.displayName,
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                                subtitle: Text(
-                                  'Sessions in this year: ${r.sessions.length}',
-                                ),
-                                children: [
-                                  ListTile(
-                                    dense: true,
-                                    title: const Text('Open profile'),
-                                    trailing: const Icon(Icons.open_in_new_rounded),
-                                    onTap: () {
-                                      Navigator.push<void>(
-                                        context,
-                                        MaterialPageRoute<void>(
-                                          builder: (_) => SiStudentDetailScreen(
-                                            studentId: r.studentId,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  ...r.sessions.map(
-                                    (s) => ListTile(
-                                      dense: true,
-                                      leading: const Icon(Icons.class_rounded),
-                                      title: Text('${s.className} — ${s.sectionName}'),
-                                      subtitle: Text('Session row id: ${s.studentSessionId}'),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
+                Expanded(child: _listBody()),
+              ],
+            ),
+    );
+  }
+
+  Widget _listBody() {
+    if (_rows.isEmpty) {
+      return SiEmptyState(
+        icon: Icons.copy_all_outlined,
+        title: 'No students loaded',
+        message:
+            'Pick a class and section, then tap Load students to see who has multiple class enrollments.',
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      itemCount: _rows.length,
+      itemBuilder: (context, i) {
+        final r = _rows[i];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          elevation: 0,
+          color: AppColors.surfaceWhite,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: AppColors.textSecondary.withOpacity(0.12),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              childrenPadding: const EdgeInsets.only(bottom: 8),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.secondaryPurple.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.copy_all_rounded,
+                  color: AppColors.secondaryPurple,
+                  size: 22,
+                ),
+              ),
+              title: Text(
+                r.displayName.isEmpty ? 'Student #${r.studentId}' : r.displayName,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${r.sessions.length} enrollments this session',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                ),
+              ),
+              iconColor: AppColors.primaryBlue,
+              collapsedIconColor: AppColors.primaryBlue,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    tileColor: AppColors.primaryBlue.withOpacity(0.06),
+                    leading: const Icon(Icons.person_rounded, color: AppColors.primaryBlue),
+                    title: const Text('Open profile'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.push<void>(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              SiStudentDetailScreen(studentId: r.studentId),
                         ),
+                      );
+                    },
+                  ),
+                ),
+                ...r.sessions.map(
+                  (s) => ListTile(
+                    dense: true,
+                    leading: Icon(
+                      Icons.class_rounded,
+                      size: 20,
+                      color: AppColors.textSecondary.withOpacity(0.8),
+                    ),
+                    title: Text(
+                      '${s.className} — ${s.sectionName}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                    ),
+                    subtitle: Text(
+                      'Session id: ${s.studentSessionId}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
+                  ),
                 ),
               ],
             ),
+          ),
+        );
+      },
     );
   }
 }

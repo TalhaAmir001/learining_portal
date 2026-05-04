@@ -250,6 +250,9 @@ class AuthProvider with ChangeNotifier {
     return v is String ? v : v.toString();
   }
 
+  /// Portal `staff.id` from teacher/admin login (`staff_id` / `id` in API → Firestore). For DC upload/share APIs.
+  int? get portalStaffId => _currentUser?.portalStaffId;
+
   bool get isWebSocketConnected => _isWebSocketConnected;
 
   // Convert UserType enum to string

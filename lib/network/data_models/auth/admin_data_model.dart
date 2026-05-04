@@ -217,8 +217,10 @@ class AdminResult {
 
   /// Creates AdminResult from JSON
   factory AdminResult.fromJson(Map<String, dynamic> json) {
+    final staffRowId = _toInt(json['staff_id']);
+    final idFromJson = _toInt(json['id']);
     return AdminResult(
-      id: _toInt(json['id']),
+      id: staffRowId > 0 ? staffRowId : idFromJson,
       employeeId: _toString(json['employee_id']),
       langId: _toInt(json['lang_id']),
       currencyId: _toInt(json['currency_id']),

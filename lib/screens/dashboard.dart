@@ -10,6 +10,8 @@ import 'package:learining_portal/utils/widgets/dashboard_grid_item.dart';
 import 'package:learining_portal/screens/feedback/daily_feedback_screen.dart';
 import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen.dart';
 import 'package:learining_portal/screens/notices/notice_board.dart';
+import 'package:learining_portal/screens/communicate/communicate_hub_screen.dart';
+import 'package:learining_portal/screens/share_content/share_content_hub_screen.dart';
 import 'package:learining_portal/screens/student_information/student_information_hub_screen.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
@@ -235,6 +237,42 @@ class _DashboardScreenState extends State<DashboardScreen>
               context,
               MaterialPageRoute<void>(
                 builder: (context) => const StudentInformationHubScreen(),
+              ),
+            );
+          },
+        ),
+      );
+      items.add(
+        DashboardItem(
+          icon: Icons.folder_shared_rounded,
+          title: 'Share Content',
+          color: AppColors.secondaryPurple,
+          gradient: const LinearGradient(
+            colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const ShareContentHubScreen(),
+              ),
+            );
+          },
+        ),
+      );
+      items.add(
+        DashboardItem(
+          icon: Icons.forum_rounded,
+          title: 'Communicate',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.secondaryPurple],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const CommunicateHubScreen(),
               ),
             );
           },

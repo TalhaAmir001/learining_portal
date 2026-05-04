@@ -30,6 +30,8 @@ lesson_plans
 
 request delete account, remove user Id in profile section, remove help and support, guide slideshow for first-time users, digital clock
 
+Share Content, Communicate
+
 Database: portal_beta
  Table: staff_roles
 Browse Browse
