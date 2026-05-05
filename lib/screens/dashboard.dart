@@ -12,6 +12,7 @@ import 'package:learining_portal/screens/feedback/guardian_daily_feedback_screen
 import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/screens/communicate/communicate_hub_screen.dart';
 import 'package:learining_portal/screens/share_content/share_content_hub_screen.dart';
+import 'package:learining_portal/screens/attendance/attendance_hub_screen.dart';
 import 'package:learining_portal/screens/student_information/student_information_hub_screen.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
@@ -273,6 +274,24 @@ class _DashboardScreenState extends State<DashboardScreen>
               context,
               MaterialPageRoute<void>(
                 builder: (context) => const CommunicateHubScreen(),
+              ),
+            );
+          },
+        ),
+      );
+      items.add(
+        DashboardItem(
+          icon: Icons.event_available_rounded,
+          title: 'Attendance',
+          color: AppColors.primaryBlue,
+          gradient: const LinearGradient(
+            colors: [AppColors.primaryBlue, AppColors.secondaryPurple],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const AttendanceHubScreen(),
               ),
             );
           },
