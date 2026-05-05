@@ -12,7 +12,19 @@ String _ymd(DateTime d) =>
 
 /// Portal `admin/subjectattendence/index` — mark by subject timetable slot.
 class AtSubjectPeriodScreen extends StatefulWidget {
-  const AtSubjectPeriodScreen({super.key});
+  const AtSubjectPeriodScreen({
+    super.key,
+    this.initialClassId,
+    this.initialSectionId,
+    this.initialDate,
+    this.initialSubjectTimetableId,
+  });
+
+  /// Optional deep-link from Academics timetable (class / section / date / slot).
+  final int? initialClassId;
+  final int? initialSectionId;
+  final DateTime? initialDate;
+  final int? initialSubjectTimetableId;
 
   @override
   State<AtSubjectPeriodScreen> createState() => _AtSubjectPeriodScreenState();
@@ -39,6 +51,9 @@ class _AtSubjectPeriodScreenState extends State<AtSubjectPeriodScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialDate != null) {
+      _date = widget.initialDate!;
+    }
     _loadMasters();
   }
 
@@ -52,6 +67,30 @@ class _AtSubjectPeriodScreenState extends State<AtSubjectPeriodScreen> {
       _types = t;
       _mastersLoading = false;
     });
+    await _applyTimetableDeepLinkIfAny();
+  }
+
+  /// After classes load, apply optional Academics → attendance deep link.
+  Future<void> _applyTimetableDeepLinkIfAny() async {
+    final cid = widget.initialClassId;
+    final sec = widget.initialSectionId;
+    final slot = widget.initialSubjectTimetableId;
+    if (cid == null || cid <= 0 || sec == null || sec <= 0) return;
+
+    await _onClassChanged(cid);
+    if (!mounted) return;
+    setState(() {
+      _sectionId = sec;
+    });
+    await _loadSlots();
+    if (!mounted) return;
+    if (slot != null && slot > 0) {
+      final match = _slots.any((s) => s.subjectTimetableId == slot);
+      if (match) {
+        setState(() => _slotId = slot);
+        await _loadGrid();
+      }
+    }
   }
 
   Future<void> _onClassChanged(int? id) async {

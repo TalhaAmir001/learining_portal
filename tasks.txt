@@ -30,7 +30,9 @@ lesson_plans
 
 request delete account, remove user Id in profile section, remove help and support, guide slideshow for first-time users, digital clock
 
-Share Content, Communicate
+Share Content, Communicate, Student Information, Attendance, Academics,, Announcement posts, View Class Summary, view Class Summary Flash Cards
+
+Terms Reports and Terms Feedback. (Also Smart Monitoring with code awaiting)
 
 Database: portal_beta
  Table: staff_roles

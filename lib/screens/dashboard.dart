@@ -13,8 +13,12 @@ import 'package:learining_portal/screens/notices/notice_board.dart';
 import 'package:learining_portal/screens/communicate/communicate_hub_screen.dart';
 import 'package:learining_portal/screens/share_content/share_content_hub_screen.dart';
 import 'package:learining_portal/screens/attendance/attendance_hub_screen.dart';
+import 'package:learining_portal/screens/academics/academics_hub_screen.dart';
+import 'package:learining_portal/screens/zoom_live_classes/zoom_live_classes_hub_screen.dart';
 import 'package:learining_portal/screens/student_information/student_information_hub_screen.dart';
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
+import 'package:learining_portal/screens/announcements/announcement_posts_screen.dart';
+import 'package:learining_portal/screens/announcements/admin/admin_announcement_posts_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:learining_portal/utils/widgets/feature_guide_dialog.dart';
@@ -224,6 +228,44 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
+    if (userType == UserType.student) {
+      items.add(
+        DashboardItem(
+          icon: Icons.campaign_rounded,
+          title: 'Announcements',
+          color: AppColors.secondaryPurple,
+          gradient: const LinearGradient(
+            colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AnnouncementPostsScreen()),
+            );
+          },
+        ),
+      );
+    }
+
+    if (userType == UserType.admin) {
+      items.add(
+        DashboardItem(
+          icon: Icons.campaign_rounded,
+          title: 'Announcement posts',
+          color: AppColors.secondaryPurple,
+          gradient: const LinearGradient(
+            colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminAnnouncementPostsScreen()),
+            );
+          },
+        ),
+      );
+    }
+
     if (userType == UserType.admin) {
       items.add(
         DashboardItem(
@@ -298,6 +340,51 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
       );
     }
+
+    if (userType == UserType.admin || userType == UserType.teacher) {
+      items.add(
+        DashboardItem(
+          icon: Icons.calendar_month_rounded,
+          title: 'Academics',
+          color: AppColors.secondaryPurple,
+          gradient: const LinearGradient(
+            colors: [AppColors.secondaryPurple, AppColors.accentTeal],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const AcademicsHubScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // if (userType == UserType.admin ||
+    //     userType == UserType.teacher ||
+    //     userType == UserType.student ||
+    //     userType == UserType.guardian) {
+    //   items.add(
+    //     DashboardItem(
+    //       icon: Icons.video_chat_rounded,
+    //       title: 'Zoom Live Classes',
+    //       color: AppColors.secondaryPurple,
+    //       gradient: const LinearGradient(
+    //         colors: [AppColors.secondaryPurple, AppColors.accentTeal],
+    //       ),
+    //       onTap: () {
+    //         Navigator.push(
+    //           context,
+    //           MaterialPageRoute<void>(
+    //             builder: (context) => const ZoomLiveClassesHubScreen(),
+    //           ),
+    //         );
+    //       },
+    //     ),
+    //   );
+    // }
 
     // Daily Feedback: admin sees full screen, guardian sees feedback for their children
     // if (userType == UserType.admin) {

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 
 class ApiClient {
@@ -111,6 +112,52 @@ class ApiClient {
       throw ApiException(
         'Request failed with status: ${response.statusCode}\n${response.body}',
       );
+    }
+  }
+
+  /// Multipart upload for file + fields.
+  ///
+  /// [fileFieldName] defaults to 'media_file' to match our PHP endpoints.
+  static Future<Map<String, dynamic>> postMultipart({
+    required String endpoint,
+    required Map<String, dynamic> fields,
+    String? filePath,
+    String fileFieldName = 'media_file',
+    String? filename,
+    Map<String, String>? headers,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl$endpoint');
+      final req = http.MultipartRequest('POST', uri);
+      req.headers.addAll({
+        'Accept': 'application/json',
+        if (headers != null) ...headers,
+      });
+      for (final e in fields.entries) {
+        if (e.value == null) continue;
+        req.fields[e.key] = e.value.toString();
+      }
+
+      if (filePath != null && filePath.isNotEmpty) {
+        final f = File(filePath);
+        if (await f.exists()) {
+          req.files.add(
+            await http.MultipartFile.fromPath(
+              fileFieldName,
+              filePath,
+              filename: filename,
+            ),
+          );
+        }
+      }
+
+      final streamed = await req.send().timeout(timeoutDuration);
+      final response = await http.Response.fromStream(streamed);
+      return _handleResponse(response);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    } on Exception catch (e) {
+      throw ApiException('Unexpected error: ${e.toString()}');
     }
   }
 }
