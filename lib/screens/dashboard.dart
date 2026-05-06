@@ -19,6 +19,8 @@ import 'package:learining_portal/screens/student_information/student_information
 import 'package:learining_portal/screens/tickets/tickets_list_screen.dart';
 import 'package:learining_portal/screens/announcements/announcement_posts_screen.dart';
 import 'package:learining_portal/screens/announcements/admin/admin_announcement_posts_screen.dart';
+import 'package:learining_portal/screens/class_summaries/class_summary_list_screen.dart';
+import 'package:learining_portal/screens/class_summary_flashcards/class_summary_flashcard_sets_screen.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:learining_portal/utils/widgets/feature_guide_dialog.dart';
@@ -241,6 +243,46 @@ class _DashboardScreenState extends State<DashboardScreen>
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const AnnouncementPostsScreen()),
+            );
+          },
+        ),
+      );
+    }
+
+    if (userType == UserType.student) {
+      items.add(
+        DashboardItem(
+          icon: Icons.article_rounded,
+          title: 'Class Summaries',
+          color: AppColors.primaryBlue,
+          gradient: const LinearGradient(
+            colors: [AppColors.primaryBlue, AppColors.accentTeal],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ClassSummaryListScreen()),
+            );
+          },
+        ),
+      );
+    }
+
+    if (userType == UserType.student) {
+      items.add(
+        DashboardItem(
+          icon: Icons.style_rounded,
+          title: 'Flashcards',
+          color: AppColors.secondaryPurple,
+          gradient: const LinearGradient(
+            colors: [AppColors.secondaryPurple, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ClassSummaryFlashcardSetsScreen(),
+              ),
             );
           },
         ),
