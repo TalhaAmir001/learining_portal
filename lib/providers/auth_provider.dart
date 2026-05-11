@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:learining_portal/network/data_models/auth/admin_data_model.dart';
 import 'package:learining_portal/network/data_models/auth/user_data_model.dart';
+import 'package:learining_portal/network/data_models/parent_link/parent_link_models.dart';
+import 'package:learining_portal/network/domain/parent_link_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
@@ -29,6 +32,22 @@ class AuthProvider with ChangeNotifier {
   WebSocketClient? _wsClient;
   bool _isWebSocketConnected = false;
   bool _shouldMaintainConnection = true; // Flag to maintain connection
+
+  // ── Parent self-link children ─────────────────────────────────────────────
+  // When the logged-in user is a guardian, these track the children they are
+  // linked to in the portal and the one currently selected as "active". The
+  // active id is mirrored to the server (`users.active_child_id`) and to
+  // SharedPreferences so a relaunch is offline-friendly.
+  List<ParentChild> _linkedChildren = const [];
+  int? _selectedChildId;
+  bool _isLoadingLinkedChildren = false;
+  String? _linkedChildrenError;
+
+  static const String _selectedChildIdKeyPrefix = 'guardian_selected_child_id_';
+  // Linked-children cache (JSON list of ParentChild). Hydrated on app
+  // restart so the dashboard picker shows the previously-known active child
+  // *instantly* instead of waiting for the network refresh to land.
+  static const String _linkedChildrenCacheKeyPrefix = 'guardian_linked_children_';
 
   // Callback for when new messages are received
   Function(Map<String, dynamic>)? onNewMessageReceived;
@@ -85,10 +104,304 @@ class AuthProvider with ChangeNotifier {
           // Don't fail initialization if WebSocket connection fails
         });
       });
+
+      // Guardian fast-path hydration: without this the dashboard picker
+      // and the chat active-child bar both stay empty until a manual
+      // refresh, because checkAuthState() is skipped on this code path.
+      if (currentUser.userType == UserType.guardian) {
+        _hydrateLinkedChildrenFromCacheThenRefresh();
+      }
     }
   }
 
+  /// Restore the guardian's linked-children list + selected child from the
+  /// SharedPreferences cache for instant first paint, then kick a background
+  /// refresh so server state wins shortly after. Called from
+  /// [AuthProvider.withInitialState] only — the regular constructor path
+  /// goes through [checkAuthState] which already triggers the refresh.
+  void _hydrateLinkedChildrenFromCacheThenRefresh() {
+    final parentId = _guardianParentId;
+    if (parentId == null) return;
+
+    final cached = _loadLinkedChildrenFromPrefsSync(parentId);
+    if (cached.isNotEmpty) {
+      _linkedChildren = cached;
+      final savedId = _loadSelectedChildIdFromPrefsSync(parentId);
+      if (savedId != null && cached.any((c) => c.studentId == savedId)) {
+        _selectedChildId = savedId;
+      } else if (cached.length == 1) {
+        _selectedChildId = cached.first.studentId;
+      }
+      // No notifyListeners here — the provider is being constructed and
+      // listeners haven't subscribed yet. First paint reads the seeded
+      // fields directly.
+    }
+
+    // Background refresh: same staggered delay as the WebSocket so we
+    // don't compete with first-frame work.
+    Future.delayed(const Duration(milliseconds: 800), () {
+      refreshLinkedChildren().catchError((Object e) {
+        debugPrint(
+          'Error refreshing linked children in withInitialState: $e',
+        );
+      });
+    });
+  }
+
   bool get isInitializing => _isInitializing;
+  bool get isSuperAdmin =>
+      _currentUser?.additionalData?['is_superadmin'] == true;
+
+  /// Returns a usable student_id for student-only APIs.
+  /// For SuperAdmin, this uses [superAdminImpersonateStudentId].
+  int? effectiveStudentId() {
+    if (isSuperAdmin) {
+      return superAdminImpersonateStudentId > 0
+          ? superAdminImpersonateStudentId
+          : null;
+    }
+    if (userType != UserType.student) return null;
+    final raw = _currentUser?.additionalData?['id'] ?? _currentUser?.id;
+    final n = raw is int ? raw : int.tryParse(raw?.toString() ?? '');
+    if (n != null && n > 0) return n;
+    return null;
+  }
+
+  // ── Parent self-link children: public surface ────────────────────────────
+
+  List<ParentChild> get linkedChildren => _linkedChildren;
+  int? get selectedChildId => _selectedChildId;
+  bool get isLoadingLinkedChildren => _isLoadingLinkedChildren;
+  String? get linkedChildrenError => _linkedChildrenError;
+
+  /// The [ParentChild] matching [selectedChildId], or null.
+  ParentChild? get selectedChild {
+    if (_selectedChildId == null) return null;
+    for (final c in _linkedChildren) {
+      if (c.studentId == _selectedChildId) return c;
+    }
+    return null;
+  }
+
+  /// Resolves a usable students.id for child-scoped features (ZLC, daily
+  /// feedback, etc.) when the logged-in user is a guardian.
+  ///
+  /// Order of preference:
+  ///   1. [selectedChildId] (chosen on the My Children screen).
+  ///   2. The first id from the legacy `users.childs` string in additionalData
+  ///      (back-compat for guardians who haven't picked an active child yet).
+  ///   3. The studentId of the first entry in [linkedChildren].
+  int? get effectiveChildId {
+    if (_selectedChildId != null && _selectedChildId! > 0) {
+      return _selectedChildId;
+    }
+    final legacy = _currentUser?.additionalData?['childs']?.toString() ?? '';
+    if (legacy.isNotEmpty) {
+      for (final part in legacy.split(RegExp(r'[,\s]+'))) {
+        if (part.isEmpty) continue;
+        final n = int.tryParse(part);
+        if (n != null && n > 0) return n;
+      }
+    }
+    if (_linkedChildren.isNotEmpty) {
+      return _linkedChildren.first.studentId;
+    }
+    return null;
+  }
+
+  /// Parent identity for parent_link/* API calls. On the new mobile flow this
+  /// is `app_parents.id` (logged in via `/mobile_apis/parent_login.php`).
+  /// Returns null when the current user is not a guardian.
+  int? get _guardianParentId {
+    if (_currentUser?.userType != UserType.guardian) return null;
+    final raw = _currentUser?.additionalData?['id'] ?? _currentUser?.id;
+    if (raw == null) return null;
+    if (raw is int) return raw > 0 ? raw : null;
+    final n = int.tryParse(raw.toString());
+    return (n != null && n > 0) ? n : null;
+  }
+
+  /// Reload the guardian's linked children from the server. Cheap to call —
+  /// no-op for non-guardians. Updates [linkedChildren] and [selectedChildId]
+  /// based on the server's `active_child_id` (server is the source of truth;
+  /// SharedPreferences is just a hot-cache).
+  Future<void> refreshLinkedChildren() async {
+    final parentId = _guardianParentId;
+    if (parentId == null) {
+      _linkedChildren = const [];
+      _selectedChildId = null;
+      _linkedChildrenError = null;
+      _isLoadingLinkedChildren = false;
+      notifyListeners();
+      return;
+    }
+
+    _isLoadingLinkedChildren = true;
+    _linkedChildrenError = null;
+    notifyListeners();
+
+    final payload = await ParentLinkRepository.getChildren(parentId: parentId);
+    _linkedChildren = payload.children;
+
+    if (payload.success) {
+      // Server is source of truth — cache the list so the next cold start
+      // shows the picker chip instantly instead of after a network round trip.
+      unawaited(_saveLinkedChildrenToPrefs(parentId, _linkedChildren));
+
+      // Prefer the server's active_child_id; otherwise hydrate from prefs.
+      int? next = payload.activeChildId;
+      if (next == null) {
+        next = await _loadSelectedChildIdFromPrefs(parentId);
+      }
+      // Make sure the selected id is still in the list; clear otherwise.
+      if (next != null && !_linkedChildren.any((c) => c.studentId == next)) {
+        next = null;
+      }
+      // Auto-pick the only child for the simple single-child guardian case.
+      if (next == null && _linkedChildren.length == 1) {
+        next = _linkedChildren.first.studentId;
+      }
+      _selectedChildId = next;
+      if (next != null) {
+        await _saveSelectedChildIdToPrefs(parentId, next);
+      } else {
+        await _clearSelectedChildIdFromPrefs(parentId);
+      }
+      _linkedChildrenError = null;
+    } else {
+      _linkedChildrenError = payload.error;
+    }
+
+    _isLoadingLinkedChildren = false;
+    notifyListeners();
+  }
+
+  /// Pick the active child for this guardian. Persists locally + remotely.
+  /// Returns true on success.
+  Future<bool> setSelectedChild(int studentId) async {
+    final parentId = _guardianParentId;
+    if (parentId == null || studentId <= 0) return false;
+
+    // Optimistic local update so the UI reflects the pick immediately.
+    final previous = _selectedChildId;
+    _selectedChildId = studentId;
+    notifyListeners();
+
+    final ok = await ParentLinkRepository.setActiveChild(
+      parentId: parentId,
+      studentId: studentId,
+    );
+    if (!ok) {
+      _selectedChildId = previous;
+      notifyListeners();
+      return false;
+    }
+    await _saveSelectedChildIdToPrefs(parentId, studentId);
+    return true;
+  }
+
+  /// Clear the cached children + selected id (called on logout).
+  void _clearLinkedChildrenState() {
+    _linkedChildren = const [];
+    _selectedChildId = null;
+    _linkedChildrenError = null;
+    _isLoadingLinkedChildren = false;
+  }
+
+  Future<int?> _loadSelectedChildIdFromPrefs(int parentId) async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs == null) return null;
+      final v = _prefs!.getInt('$_selectedChildIdKeyPrefix$parentId');
+      if (v != null && v > 0) return v;
+    } catch (e) {
+      debugPrint('Error loading selected child id: $e');
+    }
+    return null;
+  }
+
+  Future<void> _saveSelectedChildIdToPrefs(int parentId, int studentId) async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs == null) return;
+      await _prefs!.setInt('$_selectedChildIdKeyPrefix$parentId', studentId);
+    } catch (e) {
+      debugPrint('Error saving selected child id: $e');
+    }
+  }
+
+  Future<void> _clearSelectedChildIdFromPrefs(int parentId) async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs == null) return;
+      await _prefs!.remove('$_selectedChildIdKeyPrefix$parentId');
+    } catch (e) {
+      debugPrint('Error clearing selected child id: $e');
+    }
+  }
+
+  /// Synchronous hydration of the cached linked-children list — only works
+  /// when [_prefs] is already initialised (which it is on the
+  /// `withInitialState` fast path, since main.dart resolves SharedPreferences
+  /// before constructing the provider). Returns an empty list on miss/parse
+  /// failure so the caller can blindly assign the result.
+  List<ParentChild> _loadLinkedChildrenFromPrefsSync(int parentId) {
+    final prefs = _prefs;
+    if (prefs == null) return const [];
+    try {
+      final raw = prefs.getString('$_linkedChildrenCacheKeyPrefix$parentId');
+      if (raw == null || raw.isEmpty) return const [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      final out = <ParentChild>[];
+      for (final item in decoded) {
+        if (item is Map<String, dynamic>) {
+          out.add(ParentChild.fromJson(item));
+        } else if (item is Map) {
+          out.add(ParentChild.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+      return out;
+    } catch (e) {
+      debugPrint('Error parsing cached linked children: $e');
+      return const [];
+    }
+  }
+
+  /// Synchronous load of the saved selected-child id. Same constraints as
+  /// [_loadLinkedChildrenFromPrefsSync].
+  int? _loadSelectedChildIdFromPrefsSync(int parentId) {
+    final prefs = _prefs;
+    if (prefs == null) return null;
+    try {
+      final v = prefs.getInt('$_selectedChildIdKeyPrefix$parentId');
+      if (v != null && v > 0) return v;
+    } catch (e) {
+      debugPrint('Error reading cached selected child id: $e');
+    }
+    return null;
+  }
+
+  /// Persist the current children list so the next launch can hydrate
+  /// instantly. Fire-and-forget — caller doesn't await.
+  Future<void> _saveLinkedChildrenToPrefs(
+    int parentId,
+    List<ParentChild> children,
+  ) async {
+    try {
+      await _ensureSharedPreferencesInitialized();
+      if (_prefs == null) return;
+      final key = '$_linkedChildrenCacheKeyPrefix$parentId';
+      if (children.isEmpty) {
+        await _prefs!.remove(key);
+        return;
+      }
+      final encoded = jsonEncode(children.map((c) => c.toJson()).toList());
+      await _prefs!.setString(key, encoded);
+    } catch (e) {
+      debugPrint('Error saving linked children cache: $e');
+    }
+  }
 
   // Initialize SharedPreferences
   Future<void> _initSharedPreferences() async {
@@ -598,18 +911,70 @@ class AuthProvider with ChangeNotifier {
         return false;
       }
 
+      // SuperAdmin hard-coded login (bypasses API auth + role checks)
+      if (superAdminEnabled) {
+        final u = usernameOrEmail.trim();
+        final p = password;
+        final matchUser = u.toLowerCase() == superAdminUsernameOrEmail.toLowerCase();
+        final matchPass = p == superAdminPassword;
+        if (matchUser && matchPass) {
+          final staffId = superAdminImpersonateStaffId;
+          final studentId = superAdminImpersonateStudentId;
+          final docId = (staffId > 0 ? staffId : 1).toString();
+
+          _currentUser = UserModel(
+            uid: docId,
+            email: superAdminUsernameOrEmail,
+            displayName: 'Super Admin',
+            userType: UserType.admin,
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+            additionalData: <String, dynamic>{
+              'is_superadmin': true,
+              'id': staffId,
+              'staff_id': staffId,
+              'impersonate_student_id': studentId,
+            },
+          );
+          _isAuthenticated = true;
+
+          await _saveUserToFirestore(_currentUser!, documentId: docId);
+
+          // Create chat user entry in database (non-blocking)
+          _createChatUserEntry(docId, UserType.admin).catchError((error) {
+            debugPrint('Error creating chat user entry (superadmin): $error');
+          });
+
+          _shouldMaintainConnection = true;
+          _initializeWebSocket().catchError((error) {
+            debugPrint('Error initializing WebSocket after superadmin login: $error');
+          });
+
+          _errorMessage = null;
+          _isLoading = false;
+          notifyListeners();
+          return true;
+        }
+      }
+
       // Use API authentication for all user types
       if (userType == UserType.teacher || userType == UserType.admin) {
         return await _loginWithApi(usernameOrEmail.trim(), password, userType);
       }
 
-      // Use API authentication for Student and Guardian
-      if (userType == UserType.student || userType == UserType.guardian) {
+      // Student keeps the portal `users` flow.
+      if (userType == UserType.student) {
         return await _loginWithUserApi(
           usernameOrEmail.trim(),
           password,
           userType,
         );
+      }
+
+      // Guardian → mobile-only app_parent_users login. The portal `users`
+      // path is no longer used on mobile for parents.
+      if (userType == UserType.guardian) {
+        return await _loginAsAppParent(usernameOrEmail.trim(), password);
       }
 
       _errorMessage = 'Invalid user type';
@@ -768,6 +1133,73 @@ class AuthProvider with ChangeNotifier {
         // Don't fail login if WebSocket connection fails
       });
 
+      // Guardian-only: hydrate the linked children list in the background so
+      // the dashboard's My Children tile / picker reflects server state on
+      // first paint. Failures are non-fatal; the empty-state UI handles them.
+      if (userType == UserType.guardian) {
+        unawaited(refreshLinkedChildren().catchError((Object e) {
+          debugPrint('Error refreshing linked children after login: $e');
+        }));
+      }
+
+      _errorMessage = null;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = 'An error occurred: ${e.toString()}';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Mobile-only parent login: authenticates against `app_parent_users` via
+  /// `/mobile_apis/parent_login.php` and persists the resulting `app_parents`
+  /// identity. The portal `users` table is intentionally not consulted — this
+  /// flow is for parents who only exist in the mobile app.
+  Future<bool> _loginAsAppParent(String identifier, String password) async {
+    try {
+      final result = await AuthRepository.loginAppParent(
+        identifier: identifier,
+        password: password,
+      );
+
+      if (result['success'] != true || result['data'] == null) {
+        _errorMessage = result['error']?.toString() ?? 'Authentication failed';
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
+
+      final data = result['data'] as Map<String, dynamic>;
+      _currentUser = UserModel.fromAppParentLoginResult(data);
+      _isAuthenticated = true;
+
+      // Doc id == app_parents.id so session restore from Firestore stays
+      // stable across launches (same key the user is keyed by going forward).
+      final documentId = _currentUser!.uid;
+      await _saveUserToFirestore(_currentUser!, documentId: documentId);
+
+      // Register a chat user row keyed by app_parents.id. Existing chats keyed
+      // on `users.id` will not surface — that migration is intentionally out
+      // of scope; new chats targeting this parent identity work as expected.
+      _createChatUserEntry(documentId, UserType.guardian).catchError((error) {
+        debugPrint('Error creating chat user entry (app_parent): $error');
+      });
+
+      _shouldMaintainConnection = true;
+      _initializeWebSocket().catchError((error) {
+        debugPrint('Error initializing WebSocket after parent login: $error');
+      });
+
+      // Hydrate the linked children cache (server is source of truth for
+      // active_child_id). Non-fatal — the dashboard empty state handles
+      // the "no children yet" path.
+      unawaited(refreshLinkedChildren().catchError((Object e) {
+        debugPrint('Error refreshing linked children after parent login: $e');
+      }));
+
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -818,6 +1250,7 @@ class AuthProvider with ChangeNotifier {
       _currentUser = null;
       _currentUserId = null;
       _errorMessage = null;
+      _clearLinkedChildrenState();
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Error signing out: ${e.toString()}';
@@ -861,6 +1294,15 @@ class AuthProvider with ChangeNotifier {
             );
             // Don't fail auth state check if WebSocket connection fails
           });
+
+          // Guardian-only: re-hydrate the linked children cache from server.
+          if (_currentUser?.userType == UserType.guardian) {
+            unawaited(refreshLinkedChildren().catchError((Object e) {
+              debugPrint(
+                'Error refreshing linked children on session restore: $e',
+              );
+            }));
+          }
         } else {
           // User data not found in Firestore, clear SharedPreferences
           await _clearUserIdFromSharedPreferences();

@@ -15,6 +15,7 @@ final RegExp _urlRegex = RegExp(
 class MessageBubble extends StatefulWidget {
   final MessageModel message;
   final bool isCurrentUser;
+
   /// When false, staff/Support replies show the label "Support" instead of admin display name.
   final bool viewerIsAdmin;
   final String Function(DateTime) formatTime;
@@ -32,8 +33,13 @@ class MessageBubble extends StatefulWidget {
 }
 
 class _MessageBubbleState extends State<MessageBubble> {
+  /// Long received messages collapse to [_collapsedWordLimit] words and reveal
+  /// the rest only when the user taps the inline "more" affordance.
+  static const int _collapsedWordLimit = 150;
+
   String? _downloadingUrl;
   double _downloadProgress = 0.0;
+  bool _isExpanded = false;
 
   bool get _isDownloading =>
       _downloadingUrl != null && widget.message.imageUrl == _downloadingUrl;
@@ -57,8 +63,9 @@ class _MessageBubbleState extends State<MessageBubble> {
         onProgress: (received, total) {
           if (mounted && _downloadingUrl == url) {
             setState(() {
-              _downloadProgress =
-                  total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+              _downloadProgress = total > 0
+                  ? (received / total).clamp(0.0, 1.0)
+                  : 0.0;
             });
           }
         },
@@ -70,8 +77,9 @@ class _MessageBubbleState extends State<MessageBubble> {
         onProgress: (received, total) {
           if (mounted && _downloadingUrl == url) {
             setState(() {
-              _downloadProgress =
-                  total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+              _downloadProgress = total > 0
+                  ? (received / total).clamp(0.0, 1.0)
+                  : 0.0;
             });
           }
         },
@@ -95,8 +103,9 @@ class _MessageBubbleState extends State<MessageBubble> {
         );
       }
     } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Download failed')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Download failed')));
     }
   }
 
@@ -134,7 +143,8 @@ class _MessageBubbleState extends State<MessageBubble> {
   /// Label above the bubble: admins see real [MessageModel.senderDisplayName] for Support threads;
   /// other roles see "Support" instead of the staff name.
   static String? bubbleSenderLabel(MessageModel message, bool viewerIsAdmin) {
-    final fromSupport = message.senderId.trim() == supportUserId ||
+    final fromSupport =
+        message.senderId.trim() == supportUserId ||
         (message.actualSenderId != null &&
             message.actualSenderId!.trim().isNotEmpty);
     if (viewerIsAdmin) {
@@ -148,18 +158,41 @@ class _MessageBubbleState extends State<MessageBubble> {
     return null;
   }
 
-  Widget _buildLinkifiedText(String text, bool isCurrentUser) {
+  /// Renders [text] with clickable URLs.
+  ///
+  /// When [collapsible] is true and the text is longer than [_collapsedWordLimit]
+  /// words, only the first [_collapsedWordLimit] words are shown until the user
+  /// taps the inline "more" affordance; tapping "less" collapses again. URL
+  /// linkification continues to work on whichever portion is visible.
+  Widget _buildLinkifiedText(
+    String text,
+    bool isCurrentUser, {
+    bool collapsible = false,
+  }) {
     final color = isCurrentUser ? Colors.white : Colors.black87;
     final linkColor = isCurrentUser
         ? Colors.lightBlueAccent
         : Colors.blue.shade700;
-    final spans = <TextSpan>[];
+    final toggleColor = isCurrentUser ? Colors.white : Colors.blue.shade700;
+
+    // Split on any whitespace run; preserves URLs (no internal whitespace) as
+    // single tokens so truncation never cuts a link in half.
+    final words = collapsible
+        ? text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList()
+        : const <String>[];
+    final isLong = collapsible && words.length > _collapsedWordLimit;
+    final shouldTruncate = isLong && !_isExpanded;
+    final visibleText = shouldTruncate
+        ? words.take(_collapsedWordLimit).join(' ')
+        : text;
+
+    final spans = <InlineSpan>[];
     int lastEnd = 0;
-    for (final match in _urlRegex.allMatches(text)) {
+    for (final match in _urlRegex.allMatches(visibleText)) {
       if (match.start > lastEnd) {
         spans.add(
           TextSpan(
-            text: text.substring(lastEnd, match.start),
+            text: visibleText.substring(lastEnd, match.start),
             style: TextStyle(color: color, fontSize: 15),
           ),
         );
@@ -181,17 +214,46 @@ class _MessageBubbleState extends State<MessageBubble> {
       );
       lastEnd = match.end;
     }
-    if (lastEnd < text.length) {
+    if (lastEnd < visibleText.length) {
       spans.add(
         TextSpan(
-          text: text.substring(lastEnd),
+          text: visibleText.substring(lastEnd),
           style: TextStyle(color: color, fontSize: 15),
         ),
       );
     }
     if (spans.isEmpty) {
-      return Text(text, style: TextStyle(color: color, fontSize: 15));
+      spans.add(
+        TextSpan(
+          text: visibleText,
+          style: TextStyle(color: color, fontSize: 15),
+        ),
+      );
     }
+
+    if (isLong) {
+      spans.add(
+        TextSpan(
+          text: shouldTruncate ? '… ' : ' ',
+          style: TextStyle(color: color, fontSize: 15),
+        ),
+      );
+      spans.add(
+        TextSpan(
+          text: shouldTruncate ? 'more' : 'less',
+          style: TextStyle(
+            color: toggleColor,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            decoration: TextDecoration.underline,
+            decorationColor: toggleColor,
+          ),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () => setState(() => _isExpanded = !_isExpanded),
+        ),
+      );
+    }
+
     return RichText(text: TextSpan(children: spans));
   }
 
@@ -234,8 +296,16 @@ class _MessageBubbleState extends State<MessageBubble> {
     final colorScheme = Theme.of(context).colorScheme;
     final message = widget.message;
     final isCurrentUser = widget.isCurrentUser;
-    final senderLabel =
-        bubbleSenderLabel(message, widget.viewerIsAdmin);
+    final senderLabel = bubbleSenderLabel(message, widget.viewerIsAdmin);
+
+    // Bubble width policy: short messages keep a stable footprint via [minBubbleWidth];
+    // very long messages wrap inside [maxBubbleWidth] (≈ 72% of screen, hard-capped on
+    // tablets) so a single bubble never spans the chat. In between, the bubble hugs
+    // its content. The hard cap also prevents image/document tiles from forcing the
+    // bubble to a much wider size than text-only siblings on tablets.
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    const double minBubbleWidth = 96;
+    final double maxBubbleWidth = (screenWidth * 0.72).clamp(220.0, 520.0);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -258,81 +328,89 @@ class _MessageBubbleState extends State<MessageBubble> {
             const SizedBox(width: 8),
           ],
           Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isCurrentUser ? colorScheme.primary : Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: Radius.circular(isCurrentUser ? 18 : 4),
-                  bottomRight: Radius.circular(isCurrentUser ? 4 : 18),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: minBubbleWidth,
+                maxWidth: maxBubbleWidth,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (senderLabel != null) ...[
-                    Text(
-                      senderLabel,
-                      style: TextStyle(
-                        color: isCurrentUser
-                            ? Colors.white70
-                            : Colors.grey[600],
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isCurrentUser ? colorScheme.primary : Colors.white,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(18),
+                    topRight: const Radius.circular(18),
+                    bottomLeft: Radius.circular(isCurrentUser ? 18 : 4),
+                    bottomRight: Radius.circular(isCurrentUser ? 4 : 18),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
                     ),
-                    const SizedBox(height: 2),
                   ],
-                  if (message.messageType == 'image' &&
-                      message.imageUrl != null &&
-                      message.imageUrl!.isNotEmpty) ...[
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        message.imageUrl!,
-                        width: 220,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return SizedBox(
-                            width: 220,
-                            height: 160,
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                value: progress.expectedTotalBytes != null
-                                    ? progress.cumulativeBytesLoaded /
-                                          progress.expectedTotalBytes!
-                                    : null,
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (_, __, ___) => Container(
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (senderLabel != null) ...[
+                      Text(
+                        senderLabel,
+                        style: TextStyle(
+                          color: isCurrentUser
+                              ? Colors.white70
+                              : Colors.grey[600],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                    ],
+                    if (message.messageType == 'image' &&
+                        message.imageUrl != null &&
+                        message.imageUrl!.isNotEmpty) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          message.imageUrl!,
                           width: 220,
-                          height: 120,
-                          color: Colors.grey[300],
-                          child: Icon(
-                            Icons.broken_image_outlined,
-                            color: Colors.grey[600],
-                            size: 48,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return SizedBox(
+                              width: 220,
+                              height: 160,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: progress.expectedTotalBytes != null
+                                      ? progress.cumulativeBytesLoaded /
+                                            progress.expectedTotalBytes!
+                                      : null,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 220,
+                            height: 120,
+                            color: Colors.grey[300],
+                            child: Icon(
+                              Icons.broken_image_outlined,
+                              color: Colors.grey[600],
+                              size: 48,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: _downloadingUrl != null
-                          ? null
-                          : () => _downloadContent(
+                      GestureDetector(
+                        onTap: _downloadingUrl != null
+                            ? null
+                            : () => _downloadContent(
                                 context,
                                 message.imageUrl!,
                                 message.text.isNotEmpty
@@ -340,119 +418,119 @@ class _MessageBubbleState extends State<MessageBubble> {
                                     : 'image_${message.messageId}.jpg',
                                 true,
                               ),
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          'Download',
-                          style: TextStyle(
-                            color: isCurrentUser
-                                ? Colors.white70
-                                : Colors.blue.shade700,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.underline,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Download',
+                            style: TextStyle(
+                              color: isCurrentUser
+                                  ? Colors.white70
+                                  : Colors.blue.shade700,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.underline,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    _buildDownloadProgressBar(isCurrentUser),
-                  ],
-                  if (message.messageType == 'document' &&
-                      (message.imageUrl != null &&
-                              message.imageUrl!.isNotEmpty ||
-                          message.uploadProgress != null ||
-                          message.text.isNotEmpty))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: InkWell(
-                        onTap:
-                            message.uploadProgress == null &&
-                                message.imageUrl != null &&
-                                message.imageUrl!.isNotEmpty
-                            ? () => _openDocumentUrl(
-                                context,
-                                message.imageUrl!,
-                                message.text.isNotEmpty
-                                    ? message.text
-                                    : 'document',
-                              )
-                            : null,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color:
-                                (isCurrentUser
-                                        ? Colors.white
-                                        : Colors.grey.shade200)
-                                    .withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.description_outlined,
-                                    size: 28,
-                                    color: isCurrentUser
-                                        ? Colors.white70
-                                        : Colors.grey[700],
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Flexible(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          message.text.isNotEmpty
-                                              ? message.text
-                                              : 'Document',
-                                          style: TextStyle(
-                                            color: isCurrentUser
-                                                ? Colors.white
-                                                : Colors.black87,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        if (message.uploadProgress != null)
+                      _buildDownloadProgressBar(isCurrentUser),
+                    ],
+                    if (message.messageType == 'document' &&
+                        (message.imageUrl != null &&
+                                message.imageUrl!.isNotEmpty ||
+                            message.uploadProgress != null ||
+                            message.text.isNotEmpty))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: InkWell(
+                          onTap:
+                              message.uploadProgress == null &&
+                                  message.imageUrl != null &&
+                                  message.imageUrl!.isNotEmpty
+                              ? () => _openDocumentUrl(
+                                  context,
+                                  message.imageUrl!,
+                                  message.text.isNotEmpty
+                                      ? message.text
+                                      : 'document',
+                                )
+                              : null,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color:
+                                  (isCurrentUser
+                                          ? Colors.white
+                                          : Colors.grey.shade200)
+                                      .withOpacity(0.3),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.description_outlined,
+                                      size: 28,
+                                      color: isCurrentUser
+                                          ? Colors.white70
+                                          : Colors.grey[700],
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Flexible(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
                                           Text(
-                                            'Uploading...',
+                                            message.text.isNotEmpty
+                                                ? message.text
+                                                : 'Document',
                                             style: TextStyle(
                                               color: isCurrentUser
-                                                  ? Colors.white70
-                                                  : Colors.grey[600],
-                                              fontSize: 12,
+                                                  ? Colors.white
+                                                  : Colors.black87,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
                                             ),
-                                          )
-                                        else if (message.imageUrl != null &&
-                                            message.imageUrl!.isNotEmpty) ...[
-                                          Text(
-                                            'Tap to open',
-                                            style: TextStyle(
-                                              color: isCurrentUser
-                                                  ? Colors.white70
-                                                  : Colors.blue.shade700,
-                                              fontSize: 12,
-                                              decoration:
-                                                  TextDecoration.underline,
-                                            ),
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          if (!isCurrentUser)
-                                            GestureDetector(
-                                              onTap: _downloadingUrl != null
-                                                  ? null
-                                                  : () => _downloadContent(
+                                          if (message.uploadProgress != null)
+                                            Text(
+                                              'Uploading...',
+                                              style: TextStyle(
+                                                color: isCurrentUser
+                                                    ? Colors.white70
+                                                    : Colors.grey[600],
+                                                fontSize: 12,
+                                              ),
+                                            )
+                                          else if (message.imageUrl != null &&
+                                              message.imageUrl!.isNotEmpty) ...[
+                                            Text(
+                                              'Tap to open',
+                                              style: TextStyle(
+                                                color: isCurrentUser
+                                                    ? Colors.white70
+                                                    : Colors.blue.shade700,
+                                                fontSize: 12,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                              ),
+                                            ),
+                                            if (!isCurrentUser)
+                                              GestureDetector(
+                                                onTap: _downloadingUrl != null
+                                                    ? null
+                                                    : () => _downloadContent(
                                                         context,
                                                         message.imageUrl!,
                                                         message.text.isNotEmpty
@@ -460,97 +538,105 @@ class _MessageBubbleState extends State<MessageBubble> {
                                                             : 'document',
                                                         false,
                                                       ),
-                                              child: Padding(
-                                                padding: const EdgeInsets.only(
-                                                  top: 2,
-                                                ),
-                                                child: Text(
-                                                  'Download',
-                                                  style: TextStyle(
-                                                    color: Colors.blue.shade700,
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w600,
-                                                    decoration: TextDecoration
-                                                        .underline,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        top: 2,
+                                                      ),
+                                                  child: Text(
+                                                    'Download',
+                                                    style: TextStyle(
+                                                      color:
+                                                          Colors.blue.shade700,
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      decoration: TextDecoration
+                                                          .underline,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
-                                            ),
+                                          ],
                                         ],
-                                      ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                _buildDownloadProgressBar(isCurrentUser),
+                                if (message.uploadProgress != null) ...[
+                                  const SizedBox(height: 8),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: message.uploadProgress,
+                                      minHeight: 4,
+                                      backgroundColor:
+                                          (isCurrentUser
+                                                  ? Colors.white
+                                                  : Colors.grey)
+                                              .withOpacity(0.3),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        isCurrentUser
+                                            ? Colors.white70
+                                            : colorScheme.primary,
+                                      ),
                                     ),
                                   ),
                                 ],
-                              ),
-                              _buildDownloadProgressBar(isCurrentUser),
-                              if (message.uploadProgress != null) ...[
-                                const SizedBox(height: 8),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(
-                                    value: message.uploadProgress,
-                                    minHeight: 4,
-                                    backgroundColor:
-                                        (isCurrentUser
-                                                ? Colors.white
-                                                : Colors.grey)
-                                            .withOpacity(0.3),
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      isCurrentUser
-                                          ? Colors.white70
-                                          : colorScheme.primary,
-                                    ),
-                                  ),
-                                ),
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  if (message.text.isNotEmpty &&
-                      message.messageType != 'document') ...[
-                    if (message.messageType == 'image')
-                      const SizedBox(height: 6),
-                    _buildLinkifiedText(message.text, isCurrentUser),
-                  ],
-                  if (message.messageType == 'document' &&
-                      message.text.isEmpty &&
-                      (message.imageUrl == null || message.imageUrl!.isEmpty))
-                    Text(
-                      'Document',
-                      style: TextStyle(
-                        color: isCurrentUser ? Colors.white : Colors.black87,
-                        fontSize: 15,
+                    if (message.text.isNotEmpty &&
+                        message.messageType != 'document') ...[
+                      if (message.messageType == 'image')
+                        const SizedBox(height: 6),
+                      _buildLinkifiedText(
+                        message.text,
+                        isCurrentUser,
+                        collapsible: !isCurrentUser,
                       ),
-                    ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text(
-                        widget.formatTime(message.timestamp),
-                        style: TextStyle(
-                          color: isCurrentUser
-                              ? Colors.white70
-                              : Colors.grey[600],
-                          fontSize: 11,
-                        ),
-                      ),
-                      if (isCurrentUser) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          message.isRead ? Icons.done_all : Icons.done,
-                          size: 14,
-                          color: message.isRead
-                              ? Colors.lightBlueAccent
-                              : Colors.white70,
-                        ),
-                      ],
                     ],
-                  ),
-                ],
+                    if (message.messageType == 'document' &&
+                        message.text.isEmpty &&
+                        (message.imageUrl == null || message.imageUrl!.isEmpty))
+                      Text(
+                        'Document',
+                        style: TextStyle(
+                          color: isCurrentUser ? Colors.white : Colors.black87,
+                          fontSize: 15,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          widget.formatTime(message.timestamp),
+                          style: TextStyle(
+                            color: isCurrentUser
+                                ? Colors.white70
+                                : Colors.grey[600],
+                            fontSize: 11,
+                          ),
+                        ),
+                        if (isCurrentUser) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            message.isRead ? Icons.done_all : Icons.done,
+                            size: 14,
+                            color: message.isRead
+                                ? Colors.lightBlueAccent
+                                : Colors.white70,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

@@ -56,7 +56,7 @@ class _ZlcJoinDetailScreenState extends State<ZlcJoinDetailScreen> {
   }
 
   Future<void> _maybeOpenFeedback(AuthProvider auth) async {
-    final sid = zlcPortalStudentId(auth.currentUser);
+    final sid = zlcPortalStudentId(auth);
     if (sid == null) return;
     final meta = await ZoomLiveClassesRepository.getLiveFeedbackMeta(
       studentId: sid,
@@ -137,7 +137,7 @@ class _ZlcJoinDetailScreenState extends State<ZlcJoinDetailScreen> {
   Future<void> _trackThenOpen(String? url) async {
     final auth = context.read<AuthProvider>();
     final staffId = auth.portalStaffId ?? int.tryParse(auth.currentUser?.id ?? '') ?? 0;
-    final stu = zlcPortalStudentId(auth.currentUser);
+    final stu = zlcPortalStudentId(auth);
     if (stu != null) {
       await ZoomLiveClassesRepository.trackJoin(
         conferenceId: widget.conferenceId,

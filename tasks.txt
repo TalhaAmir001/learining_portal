@@ -34,6 +34,12 @@ Share Content, Communicate, Student Information, Attendance, Academics,, Announc
 
 Terms Reports and Terms Feedback. (Also Smart Monitoring with code awaiting)
 
+Student login -> term report parent should see child summary report
+
+end subscription button at login -> show popup 
+
+save end subcription date, show hard-coded notice, type reason and select end date. end date should be 4 weeks after current date in calender
+
 Database: portal_beta
  Table: staff_roles
 Browse Browse

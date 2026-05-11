@@ -74,10 +74,7 @@ class ChatWebSocketServer implements MessageComponentInterface
             $json_error = json_last_error_msg();
             echo "JSON decode failed: {$json_error}\n";
             echo "Raw message was: {$msg}\n";
-            $from->send(json_encode([
-                'action' => 'error',
-                'message' => 'Invalid JSON format: ' . $json_error
-            ]));
+            $this->sendError($from, 'Invalid JSON format: ' . $json_error);
             return;
         }
 
@@ -110,12 +107,11 @@ class ChatWebSocketServer implements MessageComponentInterface
 
                     echo "User {$user_id} ({$user_type}) connected\n";
 
-                    // Send confirmation
-                    $from->send(json_encode([
+                    $this->sendJson($from, [
                         'action' => 'connected',
                         'user_id' => $user_id,
                         'status' => 'success'
-                    ]));
+                    ]);
                 }
                 break;
 
@@ -147,23 +143,17 @@ class ChatWebSocketServer implements MessageComponentInterface
 
                         if (!$effective_sender_chat_user_id || !$effective_receiver_chat_user_id) {
                             if (!$admin_replying_as_support && !$sender_chat_user_id) {
-                                $from->send(json_encode([
-                                    'action' => 'error',
-                                    'message' => 'Sender chat_user_id not found. Please ensure user exists in fl_chat_users table.'
-                                ]));
+                                $this->sendError($from, 'Sender chat_user_id not found. Please ensure user exists in fl_chat_users table.');
                                 echo "send_message: error - sender chat_user_id not found\n";
                                 break;
                             }
-                            $from->send(json_encode([
-                                'action' => 'error',
-                                'message' => 'Receiver chat_user_id not found. Invalid chat_connection_id.'
-                            ]));
+                            $this->sendError($from, 'Receiver chat_user_id not found. Invalid chat_connection_id.');
                             echo "send_message: error - receiver chat_user_id not found\n";
                             break;
                         }
 
                         echo "send_message: effective_sender=$effective_sender_chat_user_id, effective_receiver=$effective_receiver_chat_user_id (connection_id=$chat_connection_id)\n";
-                        @ob_flush(); @flush();
+                        $this->flushOutput();
 
                         $client_ip = $this->getClientIp($from);
                         $message_type = isset($data['message_type']) ? trim($data['message_type']) : 'text';
@@ -188,44 +178,32 @@ class ChatWebSocketServer implements MessageComponentInterface
 
                         $message_id = $this->saveMessage($message_data);
                         echo "send_message: message_id=" . ($message_id ?: 'null') . "\n";
-                        @ob_flush(); @flush();
+                        $this->flushOutput();
 
                         if ($message_id) {
                             $receiver_user_id = $this->getReceiverAppUserIdByChatUserRowId($effective_receiver_chat_user_id);
                             $receiver_user_type = $this->getReceiverUserTypeFromChatUserId($effective_receiver_chat_user_id);
                             $sender_id_for_delivery = $admin_replying_as_support ? (string) self::SUPPORT_STAFF_ID : $sender_id;
                             $actual_sender_staff_id = $admin_replying_as_support && $sender_id !== null ? (string) $sender_id : null;
+                            $receiver_is_support = $receiver_user_id !== null && (int) $receiver_user_id === (int) self::SUPPORT_STAFF_ID;
+
+                            // Resolve sender display name in one DB connection.
+                            // Always resolve so the echo to sender shows their name in the bubble (e.g. admin in 1:1 chat).
                             $sender_display_name = null;
                             $mysqli = $this->getDbConnection();
                             if ($actual_sender_staff_id !== null) {
                                 $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
-                            } elseif ($receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID && $this->isStudentSideUserType($user_type)) {
-                                // Student/teacher/guardian sent to Support: get display name for staff inbox payload
-                                $ut = strtolower(trim((string) $user_type));
-                                if ($ut === 'teacher') {
-                                    $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
-                                } elseif (in_array($ut, ['guardian', 'parent'], true)) {
-                                    $sender_display_name = $this->getGuardianDisplayName($mysqli, $sender_id);
-                                } else {
-                                    $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
-                                }
+                            } elseif ($receiver_is_support && $this->isStudentSideUserType($user_type)) {
+                                $sender_display_name = $this->resolveSenderDisplayName($mysqli, $sender_id, $user_type);
                             }
                             if ($sender_display_name === null && $sender_id !== null) {
-                                // Always resolve sender name so the echo to sender shows their name in the bubble (e.g. admin in 1:1 chat)
-                                $ut = strtolower(trim((string) $user_type));
-                                if (in_array($ut, ['staff', 'admin', 'teacher'], true)) {
-                                    $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
-                                } elseif (in_array($ut, ['guardian', 'parent'], true)) {
-                                    $sender_display_name = $this->getGuardianDisplayName($mysqli, $sender_id);
-                                } else {
-                                    $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
-                                }
+                                $sender_display_name = $this->resolveSenderDisplayName($mysqli, $sender_id, $user_type);
                             }
                             if ($mysqli) {
                                 $mysqli->close();
                             }
                             echo "send_message: receiver_user_id=$receiver_user_id, receiver_user_type=$receiver_user_type\n";
-                            @ob_flush(); @flush();
+                            $this->flushOutput();
 
                             $basePayload = [
                                 'action' => 'new_message',
@@ -257,65 +235,42 @@ class ChatWebSocketServer implements MessageComponentInterface
 
                             // Deliver to the primary receiver (student, teacher, guardian, or Support)
                             $deliveredWs = false;
-                            if ($receiver_user_id !== null && (int)$receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
+                            if ($receiver_user_id !== null && !$receiver_is_support) {
                                 $receiverKeysToTry = $this->getReceiverAppUserIdsForChatUserRow($effective_receiver_chat_user_id);
                                 foreach ($receiverKeysToTry as $key) {
-                                    $recvConn = null;
-                                    if (isset($this->users[$key])) {
-                                        $recvConn = $this->users[$key];
-                                    } elseif (ctype_digit((string) $key) && isset($this->users[(int) $key])) {
-                                        $recvConn = $this->users[(int) $key];
+                                    $recvConn = $this->findUserConnection($key);
+                                    if ($recvConn === null) {
+                                        continue;
                                     }
-                                    if ($recvConn !== null) {
-                                        try {
-                                            $recvConn->send(json_encode($basePayload));
-                                            echo "Message delivered via WebSocket to user $key\n";
-                                            $deliveredWs = true;
-                                            break;
-                                        } catch (\Exception $e) {
-                                            echo "WebSocket send failed for user $key: {$e->getMessage()}, removing from users\n";
-                                            unset($this->users[(string) $key]);
-                                            if (ctype_digit((string) $key)) {
-                                                unset($this->users[(int) $key]);
-                                            }
-                                        }
+                                    try {
+                                        $recvConn->send(json_encode($basePayload));
+                                        echo "Message delivered via WebSocket to user $key\n";
+                                        $deliveredWs = true;
+                                        break;
+                                    } catch (\Exception $e) {
+                                        echo "WebSocket send failed for user $key: {$e->getMessage()}, removing from users\n";
+                                        $this->removeUserKey($key);
                                     }
                                 }
                                 if (!$deliveredWs) {
                                     echo "Receiver $receiver_user_id not in WebSocket users (tried keys: " . implode(', ', $receiverKeysToTry) . ")\n";
                                 }
                             }
-                            if (!$deliveredWs && $receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
+                            if (!$deliveredWs && $receiver_is_support) {
                                 // Receiver is Support: broadcast to all staff (parent/student/teacher sent). Skip sender. Ensure sender_display_name so admin sees who sent.
                                 $staffPayload = $basePayload;
                                 $staffPayload['sender_id'] = (string) $sender_id;
                                 if ($sender_display_name === null && $sender_id !== null && $this->isStudentSideUserType($user_type)) {
                                     $mysqli = $this->getDbConnection();
                                     if ($mysqli) {
-                                        $ut = strtolower(trim((string) $user_type));
-                                        if ($ut === 'teacher') {
-                                            $sender_display_name = $this->getStaffDisplayName($mysqli, $sender_id);
-                                        } elseif (in_array($ut, ['guardian', 'parent'], true)) {
-                                            $sender_display_name = $this->getGuardianDisplayName($mysqli, $sender_id);
-                                        } else {
-                                            $sender_display_name = $this->getStudentDisplayName($mysqli, $sender_id);
-                                        }
+                                        $sender_display_name = $this->resolveSenderDisplayName($mysqli, $sender_id, $user_type);
                                         $mysqli->close();
                                     }
                                 }
                                 if ($sender_display_name !== null) {
                                     $staffPayload['sender_display_name'] = $sender_display_name;
                                 }
-                                foreach ($this->staffConnections as $staffConn) {
-                                    if ($staffConn === $from) {
-                                        continue; // do not send to sender – avoid duplicate on their screen
-                                    }
-                                    try {
-                                        $staffConn->send(json_encode($staffPayload));
-                                    } catch (\Exception $e) {
-                                        // ignore per-connection errors
-                                    }
-                                }
+                                $this->broadcastToStaff($staffPayload, $from);
                                 echo "Message broadcast to staff (Support inbox), sender excluded\n";
                             }
 
@@ -329,29 +284,16 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 if ($sender_display_name !== null) {
                                     $staffPayload['sender_display_name'] = $sender_display_name;
                                 }
-                                $inThread = 0;
-                                foreach ($this->staffConnections as $staffConn) {
-                                    if ($staffConn === $from) {
-                                        continue; // do not send to sender – they already have optimistic message
-                                    }
-                                    if (isset($this->staffViewingChat[$staffConn]) && (string)$this->staffViewingChat[$staffConn] === (string)$chat_connection_id) {
-                                        try {
-                                            $staffConn->send(json_encode($staffPayload));
-                                            $inThread++;
-                                        } catch (\Exception $e) {
-                                            // ignore
-                                        }
-                                    }
-                                }
+                                $inThread = $this->broadcastToStaff($staffPayload, $from, $chat_connection_id);
                                 echo "Support thread group: new_message sent to $inThread admin(s) viewing this thread\n";
                             }
 
                             // FCM data-only: always send for non-Support receivers so the app can show a foreground/local
                             // alert even when WebSocket already delivered (parents/students otherwise only got push when WS was down).
                             // Data-only avoids duplicate system tray + flutter_local_notifications when app is backgrounded.
-                            if ($message_id && $receiver_user_id !== null && $receiver_user_id !== '' && (int) $receiver_user_id !== (int) self::SUPPORT_STAFF_ID) {
+                            if ($message_id && $receiver_user_id !== null && $receiver_user_id !== '' && !$receiver_is_support) {
                                 echo "Sending FCM data-only chat message to receiver $receiver_user_id (WS delivered=" . ($deliveredWs ? 'yes' : 'no') . ")...\n";
-                                @ob_flush(); @flush();
+                                $this->flushOutput();
                                 $this->fcmHelper->sendMessageNotification(
                                     $receiver_user_id,
                                     $receiver_user_type ?? 'student',
@@ -363,10 +305,10 @@ class ChatWebSocketServer implements MessageComponentInterface
                                     $message_id
                                 );
                                 echo "FCM sendMessageNotification completed for receiver $receiver_user_id\n";
-                            } elseif ($message_id && $receiver_user_id !== null && (int)$receiver_user_id === (int) self::SUPPORT_STAFF_ID) {
+                            } elseif ($message_id && $receiver_is_support) {
                                 // Receiver is Support – send FCM to all staff so admins get push when app is closed
                                 echo "Sending FCM to all staff (Support inbox)...\n";
-                                @ob_flush(); @flush();
+                                $this->flushOutput();
                                 $this->fcmHelper->sendMessageNotificationToAllStaff(
                                     $sender_id,
                                     $user_type,
@@ -381,11 +323,7 @@ class ChatWebSocketServer implements MessageComponentInterface
                             // Send full new_message to sender so they see their message (app shows only server bubbles)
                             $senderPayload = $basePayload;
                             $senderPayload['sender_id'] = (string) $sender_id;
-                            try {
-                                $from->send(json_encode($senderPayload));
-                            } catch (\Exception $e) {
-                                // ignore
-                            }
+                            $this->sendJson($from, $senderPayload);
 
                             $messageSentPayload = [
                                 'action' => 'message_sent',
@@ -398,7 +336,7 @@ class ChatWebSocketServer implements MessageComponentInterface
                             if ($actual_sender_staff_id !== null) {
                                 $messageSentPayload['actual_sender_staff_id'] = $actual_sender_staff_id;
                             }
-                            $from->send(json_encode($messageSentPayload));
+                            $this->sendJson($from, $messageSentPayload);
 
                             // Automated reply when a non-admin sends to Support outside 9am–5pm (at most once per 60 minutes per chat)
                             if ($connection_is_support && $this->isStudentSideUserType($user_type) && !$this->isWithinSupportHours()) {
@@ -410,25 +348,16 @@ class ChatWebSocketServer implements MessageComponentInterface
                                 );
                             }
                         } else {
-                            $from->send(json_encode([
-                                'action' => 'error',
-                                'message' => 'Failed to save message to database'
-                            ]));
+                            $this->sendError($from, 'Failed to save message to database');
                             echo "send_message: error - saveMessage returned no message_id\n";
                         }
                     } catch (\Throwable $e) {
                         echo "send_message exception: " . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n";
-                        @ob_flush(); @flush();
-                        $from->send(json_encode([
-                            'action' => 'error',
-                            'message' => 'Server error: ' . $e->getMessage()
-                        ]));
+                        $this->flushOutput();
+                        $this->sendError($from, 'Server error: ' . $e->getMessage());
                     }
                 } else {
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Missing required fields: chat_connection_id, message, sender_id'
-                    ]));
+                    $this->sendError($from, 'Missing required fields: chat_connection_id, message, sender_id');
                 }
                 break;
 
@@ -445,12 +374,12 @@ class ChatWebSocketServer implements MessageComponentInterface
                     $current_user_id = isset($from->user_id) ? $from->user_id : null;
                     $current_user_type = isset($from->user_type) ? $from->user_type : 'staff';
                     $result = $this->getMessagesPaginated($chat_connection_id, $current_user_id, $current_user_type, $limit, $before_id);
-                    $from->send(json_encode([
+                    $this->sendJson($from, [
                         'action' => 'messages',
                         'chat_connection_id' => $chat_connection_id,
                         'messages' => $result['messages'],
                         'has_more' => $result['has_more']
-                    ]));
+                    ]);
                 }
                 break;
 
@@ -471,7 +400,7 @@ class ChatWebSocketServer implements MessageComponentInterface
                     if ($reader_chat_user_id_for_update !== null) {
                         $this->markMessagesAsReadByChatUserId($chat_connection_id, $reader_chat_user_id_for_update);
                     }
-                    $from->send(json_encode(['action' => 'messages_marked_read', 'chat_connection_id' => $chat_connection_id]));
+                    $this->sendJson($from, ['action' => 'messages_marked_read', 'chat_connection_id' => $chat_connection_id]);
 
                     // Notify the other party so their sent-message ticks update to "read" in real time
                     $reader_chat_user_id = $this->getChatUserId($reader_user_id, $reader_user_type);
@@ -479,25 +408,23 @@ class ChatWebSocketServer implements MessageComponentInterface
                         $other_chat_user_id = $this->getReceiverChatUserId($chat_connection_id, $reader_chat_user_id);
                         if ($other_chat_user_id) {
                             $other_app_user_id = $this->getReceiverAppUserIdByChatUserRowId($other_chat_user_id);
-                            $readPayload = json_encode(['action' => 'messages_read', 'chat_connection_id' => $chat_connection_id]);
-                            if ($other_app_user_id !== null && (int)$other_app_user_id === (int) self::SUPPORT_STAFF_ID) {
+                            $readPayload = ['action' => 'messages_read', 'chat_connection_id' => $chat_connection_id];
+                            if ($other_app_user_id !== null && (int) $other_app_user_id === (int) self::SUPPORT_STAFF_ID) {
                                 // Other party is Support → notify all connected staff/admins
-                                foreach ($this->staffConnections as $staffConn) {
-                                    if ($staffConn === $from) continue;
-                                    try { $staffConn->send($readPayload); } catch (\Exception $e) {}
-                                }
+                                $this->broadcastToStaff($readPayload, $from);
                             } else {
-                                // Notify individual sender (try all possible connection keys)
+                                // Notify individual sender (try all possible connection keys; stop on first successful send)
                                 $keys = $this->getReceiverAppUserIdsForChatUserRow($other_chat_user_id);
+                                $readPayloadJson = json_encode($readPayload);
                                 foreach ($keys as $key) {
-                                    $peer = null;
-                                    if (isset($this->users[$key])) {
-                                        $peer = $this->users[$key];
-                                    } elseif (ctype_digit((string) $key) && isset($this->users[(int) $key])) {
-                                        $peer = $this->users[(int) $key];
-                                    }
+                                    $peer = $this->findUserConnection($key);
                                     if ($peer !== null && $peer !== $from) {
-                                        try { $peer->send($readPayload); break; } catch (\Exception $e) {}
+                                        try {
+                                            $peer->send($readPayloadJson);
+                                            break;
+                                        } catch (\Exception $e) {
+                                            // try the next key
+                                        }
                                     }
                                 }
                             }
@@ -516,12 +443,12 @@ class ChatWebSocketServer implements MessageComponentInterface
                 $valid_report_types = ['student', 'guardian', 'teacher', 'admin', 'staff'];
                 if ($reporter_user_id !== null && $reported_user_id !== null && in_array($reported_user_type, $valid_report_types)) {
                     $ok = $this->saveComplainReport($reporter_user_id, $reporter_type, $reported_user_id, $reported_user_type, $reason, $chat_connection_id);
-                    $from->send(json_encode([
+                    $this->sendJson($from, [
                         'action' => $ok ? 'report_submitted' : 'error',
                         'message' => $ok ? 'Report submitted successfully' : 'Failed to submit report'
-                    ]));
+                    ]);
                 } else {
-                    $from->send(json_encode(['action' => 'error', 'message' => 'Missing or invalid report data']));
+                    $this->sendError($from, 'Missing or invalid report data');
                 }
                 break;
             case 'create_chat_user':
@@ -537,20 +464,14 @@ class ChatWebSocketServer implements MessageComponentInterface
 
                 if (!$user_id) {
                     echo "Error: Missing user_id\n";
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Missing user_id'
-                    ]));
+                    $this->sendError($from, 'Missing user_id');
                     break;
                 }
 
                 $valid_types = ['student', 'guardian', 'teacher', 'admin', 'staff'];
                 if (!in_array($user_type, $valid_types)) {
                     echo "Error: Invalid user_type={$user_type}\n";
-                    $from->send(json_encode([
-                        'action' => 'error',
-                        'message' => 'Invalid user_type. Must be one of: ' . implode(', ', $valid_types)
-                    ]));
+                    $this->sendError($from, 'Invalid user_type. Must be one of: ' . implode(', ', $valid_types));
                     break;
                 }
 
@@ -607,10 +528,7 @@ class ChatWebSocketServer implements MessageComponentInterface
             default:
                 echo "Unknown action received: {$action}\n";
                 echo "Full data: " . json_encode($data) . "\n";
-                $from->send(json_encode([
-                    'action' => 'error',
-                    'message' => 'Unknown action: ' . $action
-                ]));
+                $this->sendError($from, 'Unknown action: ' . $action);
                 break;
         }
     }
@@ -677,9 +595,8 @@ class ChatWebSocketServer implements MessageComponentInterface
         // Remove user from users array (string key; also int key for legacy sessions)
         if (isset($conn->user_id)) {
             $uid = trim((string) $conn->user_id);
-            unset($this->users[$uid]);
-            if ($uid !== '' && ctype_digit($uid)) {
-                unset($this->users[(int) $uid]);
+            if ($uid !== '') {
+                $this->removeUserKey($uid);
             }
             echo "User {$uid} disconnected\n";
         } else {
@@ -726,6 +643,111 @@ class ChatWebSocketServer implements MessageComponentInterface
         return '127.0.0.1';
     }
 
+    // ---------------------------------------------------------------------
+    // Small reusable helpers (no behaviour change, just consolidate repeats)
+    // ---------------------------------------------------------------------
+
+    /** Safely send a JSON-encoded payload to a connection (swallow per-conn send errors). */
+    private function sendJson(ConnectionInterface $conn, array $payload)
+    {
+        try {
+            $conn->send(json_encode($payload));
+        } catch (\Exception $e) {
+            // ignore per-connection send errors
+        }
+    }
+
+    /** Send a standard {action: error, message: ...} response. */
+    private function sendError(ConnectionInterface $conn, $message)
+    {
+        $this->sendJson($conn, ['action' => 'error', 'message' => $message]);
+    }
+
+    /** Flush PHP output buffers (used to keep the live log in nohup/tail). */
+    private function flushOutput()
+    {
+        @ob_flush();
+        @flush();
+    }
+
+    /** Look up a connection in $this->users trying string then int key. */
+    private function findUserConnection($key)
+    {
+        if (isset($this->users[$key])) {
+            return $this->users[$key];
+        }
+        if (ctype_digit((string) $key) && isset($this->users[(int) $key])) {
+            return $this->users[(int) $key];
+        }
+        return null;
+    }
+
+    /** Remove a user from $this->users (both string and int variants of the key). */
+    private function removeUserKey($key)
+    {
+        unset($this->users[(string) $key]);
+        if (ctype_digit((string) $key)) {
+            unset($this->users[(int) $key]);
+        }
+    }
+
+    /** True if value represents a real (non-empty, non-zero) id. */
+    private function isNonZeroId($val)
+    {
+        return $val !== null && $val !== '' && (string) $val !== '0';
+    }
+
+    /**
+     * Resolve a display name for a sender given their app id and user_type.
+     * Centralises the staff/teacher/guardian/student switch used in several places.
+     */
+    private function resolveSenderDisplayName($mysqli, $sender_id, $user_type)
+    {
+        if ($mysqli === null || $sender_id === null) {
+            return null;
+        }
+        $ut = strtolower(trim((string) $user_type));
+        if (in_array($ut, ['staff', 'admin', 'teacher'], true)) {
+            return $this->getStaffDisplayName($mysqli, $sender_id);
+        }
+        if (in_array($ut, ['guardian', 'parent'], true)) {
+            return $this->getGuardianDisplayName($mysqli, $sender_id);
+        }
+        return $this->getStudentDisplayName($mysqli, $sender_id);
+    }
+
+    /**
+     * Broadcast a payload to all staff connections.
+     *
+     * @param array                    $payload     The JSON payload.
+     * @param ConnectionInterface|null $exclude     A connection to skip (typically the sender).
+     * @param string|null              $onlyViewing If set, only send to staff currently viewing this chat_connection_id.
+     * @return int Number of clients the payload was successfully delivered to.
+     */
+    private function broadcastToStaff(array $payload, ConnectionInterface $exclude = null, $onlyViewing = null)
+    {
+        $msg = json_encode($payload);
+        $count = 0;
+        foreach ($this->staffConnections as $staffConn) {
+            if ($exclude !== null && $staffConn === $exclude) {
+                continue;
+            }
+            if ($onlyViewing !== null) {
+                if (!isset($this->staffViewingChat[$staffConn])
+                    || (string) $this->staffViewingChat[$staffConn] !== (string) $onlyViewing) {
+                    continue;
+                }
+            }
+            try {
+                $staffConn->send($msg);
+                $count++;
+            } catch (\Exception $e) {
+                // ignore per-connection errors
+            }
+        }
+        return $count;
+    }
+
     /**
      * Admin display name from staff table (column: name)
      */
@@ -760,6 +782,25 @@ class ChatWebSocketServer implements MessageComponentInterface
             $name .= ' (' . $admission . ')';
         }
         return $name;
+    }
+
+    /**
+     * Pick a sender display name from a joined fl_chat_messages row using the given prefix
+     * ('user_one' or 'user_two'). Tries staff name → teacher name → parent name → student name.
+     */
+    private function pickJoinedSenderName(array $row, $prefix)
+    {
+        foreach (['staff_name', 'teacher_name', 'parent_name'] as $field) {
+            $name = trim((string) ($row[$prefix . '_' . $field] ?? ''));
+            if ($name !== '') {
+                return $name;
+            }
+        }
+        return $this->formatStudentDisplayName(
+            $row[$prefix . '_firstname'] ?? null,
+            $row[$prefix . '_lastname'] ?? null,
+            $row[$prefix . '_admission_no'] ?? null
+        );
     }
 
     /**
@@ -801,34 +842,20 @@ class ChatWebSocketServer implements MessageComponentInterface
     }
 
     /**
-     * Get database connection
+     * Get a fresh MySQLi connection. Returns null on failure.
+     * Note: credentials are hardcoded here because the long-running WS process keeps
+     * its own connections – we do not actually use CodeIgniter's database.php.
+     * BASEPATH / ENVIRONMENT are already defined at the top of this file.
      */
     private function getDbConnection()
     {
-        // Define CodeIgniter constants to bypass security check
-        if (!defined('BASEPATH')) {
-            define('BASEPATH', __DIR__ . '/system/');
-        }
-        if (!defined('ENVIRONMENT')) {
-            define('ENVIRONMENT', 'production');
-        }
-
-        // Load database config
-        require __DIR__ . '/application/config/database.php';
-        $db_config = $db['default'];
-
         $mysqli = new mysqli(
             'localhost',
             'portal_beta',
             'X7&?C%Yx5[L-QyiL',
             'portal_beta'
         );
-
-        if ($mysqli->connect_error) {
-            return null;
-        }
-
-        return $mysqli;
+        return $mysqli->connect_error ? null : $mysqli;
     }
 
     /**
@@ -958,23 +985,8 @@ class ChatWebSocketServer implements MessageComponentInterface
             'created_at' => date('Y-m-d H:i:s'),
             'sender_display_name' => 'Support',
         ];
-        try {
-            $from->send(json_encode($payload));
-        } catch (\Exception $e) {
-            // ignore
-        }
-        foreach ($this->staffConnections as $staffConn) {
-            if ($staffConn === $from) {
-                continue;
-            }
-            if (isset($this->staffViewingChat[$staffConn]) && (string) $this->staffViewingChat[$staffConn] === (string) $chat_connection_id) {
-                try {
-                    $staffConn->send(json_encode($payload));
-                } catch (\Exception $e) {
-                    // ignore
-                }
-            }
-        }
+        $this->sendJson($from, $payload);
+        $this->broadcastToStaff($payload, $from, $chat_connection_id);
         echo "sendSupportHoursAutoReply: auto message $auto_message_id delivered\n";
     }
 
@@ -1147,22 +1159,24 @@ class ChatWebSocketServer implements MessageComponentInterface
             $col = $this->getIdColumnForUserType($user_type);
             $user_id = null;
             // For the Support virtual user (staff_id=0, user_type='staff') we must return '0' so the
-            // caller can detect it as Support and broadcast to all admins.
+            // caller can detect it as Support and broadcast to all admins. So staff_id allows '0';
+            // every other column requires a real (non-zero) id.
             if ($col === 'staff_id' && $row['staff_id'] !== null && $row['staff_id'] !== '') {
-                $user_id = $row['staff_id']; // includes '0' for Support virtual user
-            } elseif ($col === 'teacher_id' && $row['teacher_id'] !== null && $row['teacher_id'] !== '' && (string)$row['teacher_id'] !== '0') {
-                $user_id = $row['teacher_id'];
-            } elseif ($col === 'student_id' && $row['student_id'] !== null && $row['student_id'] !== '' && (string)$row['student_id'] !== '0') {
-                $user_id = $row['student_id'];
-            } elseif ($col === 'parent_id' && $row['parent_id'] !== null && $row['parent_id'] !== '' && (string)$row['parent_id'] !== '0') {
-                $user_id = $row['parent_id'];
+                $user_id = $row['staff_id'];
+            } elseif (in_array($col, ['teacher_id', 'student_id', 'parent_id'], true) && $this->isNonZeroId($row[$col])) {
+                $user_id = $row[$col];
             }
             // Fallback: legacy rows or empty user_type – use first non-null id column (exclude 0 for non-staff)
             if ($user_id === null || $user_id === '') {
-                $user_id = ($row['staff_id'] !== null && $row['staff_id'] !== '') ? $row['staff_id']
-                    : (($row['student_id'] !== null && $row['student_id'] !== '' && (string)$row['student_id'] !== '0') ? $row['student_id']
-                    : (($row['teacher_id'] !== null && $row['teacher_id'] !== '' && (string)$row['teacher_id'] !== '0') ? $row['teacher_id']
-                    : $row['parent_id']));
+                if ($row['staff_id'] !== null && $row['staff_id'] !== '') {
+                    $user_id = $row['staff_id'];
+                } elseif ($this->isNonZeroId($row['student_id'])) {
+                    $user_id = $row['student_id'];
+                } elseif ($this->isNonZeroId($row['teacher_id'])) {
+                    $user_id = $row['teacher_id'];
+                } else {
+                    $user_id = $row['parent_id'];
+                }
             }
             $mysqli->close();
             return $user_id !== null && $user_id !== '' ? (string) $user_id : null;
@@ -1196,7 +1210,7 @@ class ChatWebSocketServer implements MessageComponentInterface
         $col = $this->getIdColumnForUserType($user_type);
         $ids = [];
         $add = function ($val) use (&$ids) {
-            if ($val !== null && $val !== '' && (string)$val !== '0') {
+            if ($this->isNonZeroId($val)) {
                 $k = (string) $val;
                 if (!in_array($k, $ids, true)) {
                     $ids[] = $k;
@@ -1234,36 +1248,28 @@ class ChatWebSocketServer implements MessageComponentInterface
         $chat_user_id = $mysqli->real_escape_string($chat_user_id);
         $sql = "SELECT user_type, staff_id, student_id, teacher_id, parent_id FROM fl_chat_users WHERE id = '$chat_user_id' LIMIT 1";
         $result = $mysqli->query($sql);
+        $resolved = null;
         if ($result && $row = $result->fetch_assoc()) {
             $ut = isset($row['user_type']) ? strtolower(trim((string) $row['user_type'])) : '';
             if ($ut === 'parent') {
                 $ut = 'guardian';
             }
             if ($ut !== '') {
-                $mysqli->close();
-                return $ut;
+                $resolved = $ut;
+            } elseif ($this->isNonZeroId($row['parent_id'])) {
+                $resolved = 'guardian';
+            } elseif ($this->isNonZeroId($row['student_id'])) {
+                $resolved = 'student';
+            } elseif ($this->isNonZeroId($row['teacher_id'])) {
+                $resolved = 'teacher';
+            } elseif (isset($row['staff_id']) && $row['staff_id'] !== null && $row['staff_id'] !== '') {
+                $resolved = 'staff';
+            } else {
+                $resolved = 'student';
             }
-            if ($row['parent_id'] !== null && $row['parent_id'] !== '' && (string) $row['parent_id'] !== '0') {
-                $mysqli->close();
-                return 'guardian';
-            }
-            if ($row['student_id'] !== null && $row['student_id'] !== '' && (string) $row['student_id'] !== '0') {
-                $mysqli->close();
-                return 'student';
-            }
-            if ($row['teacher_id'] !== null && $row['teacher_id'] !== '' && (string) $row['teacher_id'] !== '0') {
-                $mysqli->close();
-                return 'teacher';
-            }
-            if (isset($row['staff_id']) && $row['staff_id'] !== null && $row['staff_id'] !== '') {
-                $mysqli->close();
-                return 'staff';
-            }
-            $mysqli->close();
-            return 'student';
         }
         $mysqli->close();
-        return null;
+        return $resolved;
     }
 
     /**
@@ -1382,10 +1388,9 @@ class ChatWebSocketServer implements MessageComponentInterface
                 $sender_display_name = null;
                 if ($actual_sender_staff_id !== null && !empty($row['actual_sender_display_name'])) {
                     $sender_display_name = $row['actual_sender_display_name'];
-                } elseif ($sender_chat_user_id == $chat_user_one_id) {
-                    $sender_display_name = !empty(trim((string)($row['user_one_staff_name'] ?? ''))) ? trim($row['user_one_staff_name']) : (!empty(trim((string)($row['user_one_teacher_name'] ?? ''))) ? trim($row['user_one_teacher_name']) : (!empty(trim((string)($row['user_one_parent_name'] ?? ''))) ? trim($row['user_one_parent_name']) : $this->formatStudentDisplayName($row['user_one_firstname'] ?? null, $row['user_one_lastname'] ?? null, $row['user_one_admission_no'] ?? null)));
                 } else {
-                    $sender_display_name = !empty(trim((string)($row['user_two_staff_name'] ?? ''))) ? trim($row['user_two_staff_name']) : (!empty(trim((string)($row['user_two_teacher_name'] ?? ''))) ? trim($row['user_two_teacher_name']) : (!empty(trim((string)($row['user_two_parent_name'] ?? ''))) ? trim($row['user_two_parent_name']) : $this->formatStudentDisplayName($row['user_two_firstname'] ?? null, $row['user_two_lastname'] ?? null, $row['user_two_admission_no'] ?? null)));
+                    $prefix = ($sender_chat_user_id == $chat_user_one_id) ? 'user_one' : 'user_two';
+                    $sender_display_name = $this->pickJoinedSenderName($row, $prefix);
                 }
                 $message = [
                     'id' => $row['id'],
@@ -1423,18 +1428,6 @@ class ChatWebSocketServer implements MessageComponentInterface
         $reader_chat_user_id = intval($reader_chat_user_id);
         $mysqli->query("UPDATE fl_chat_messages SET is_read = 1 WHERE chat_connection_id = '$chat_connection_id' AND chat_user_id = $reader_chat_user_id");
         $mysqli->close();
-    }
-
-    /**
-     * Mark messages in a chat as read (resolves reader chat_user_id from user_id and user_type)
-     */
-    private function markMessagesAsRead($chat_connection_id, $reader_user_id, $reader_user_type)
-    {
-        $reader_chat_user_id = $this->getChatUserId($reader_user_id, $reader_user_type);
-        if ($reader_chat_user_id === null) {
-            return;
-        }
-        $this->markMessagesAsReadByChatUserId($chat_connection_id, $reader_chat_user_id);
     }
 
     /**

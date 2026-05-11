@@ -83,7 +83,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 tooltip: 'Send document',
               ),
 
-              // Message input field
+              // Message input field. minLines/maxLines cap how tall the bar can
+              // grow as the user types; once the user passes maxLines lines the
+              // field scrolls internally instead of pushing the parent Column
+              // (in chat.dart) past its available height — that was the
+              // RenderFlex overflow seen when the keyboard was open.
               Expanded(
                 child: TextField(
                   controller: _messageController,
@@ -116,9 +120,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
                       vertical: 12,
                     ),
                   ),
-                  maxLines: null,
+                  minLines: 1,
+                  maxLines: 5,
+                  keyboardType: TextInputType.multiline,
                   textCapitalization: TextCapitalization.sentences,
-                  onSubmitted: (_) => _sendMessage(),
+                  textInputAction: TextInputAction.newline,
                 ),
               ),
 

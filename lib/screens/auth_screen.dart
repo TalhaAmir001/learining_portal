@@ -298,14 +298,17 @@ class _AuthScreenState extends State<AuthScreen>
             },
           ),
 
-          // Username/Email Field (Username for Student/Guardian, Email for Teacher/Admin)
+          // Identifier field:
+          //  • Student   → username (portal `users` flow)
+          //  • Guardian  → username OR email (mobile `app_parent_users` flow)
+          //  • Teacher / Admin → email
           CustomTextField(
             controller: _emailController,
-            label:
-                (_selectedUserType == UserType.student ||
-                    _selectedUserType == UserType.guardian)
+            label: _selectedUserType == UserType.student
                 ? 'Username'
-                : 'Email',
+                : _selectedUserType == UserType.guardian
+                    ? 'Username or email'
+                    : 'Email',
             icon:
                 (_selectedUserType == UserType.student ||
                     _selectedUserType == UserType.guardian)
@@ -318,13 +321,16 @@ class _AuthScreenState extends State<AuthScreen>
                 : TextInputType.emailAddress,
             validator: (value) {
               if (value == null || value.isEmpty) {
-                if (_selectedUserType == UserType.student ||
-                    _selectedUserType == UserType.guardian) {
+                if (_selectedUserType == UserType.student) {
                   return 'Please enter your username';
+                }
+                if (_selectedUserType == UserType.guardian) {
+                  return 'Please enter your username or email';
                 }
                 return 'Please enter your email';
               }
-              // Only validate email format for Teacher/Admin
+              // Only validate email format for Teacher/Admin. Guardian accepts
+              // either form (server is case-insensitive), so we don't enforce.
               if (_selectedUserType == UserType.teacher ||
                   _selectedUserType == UserType.admin) {
                 if (!RegExp(

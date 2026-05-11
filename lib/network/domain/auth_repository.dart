@@ -155,4 +155,63 @@ class AuthRepository {
       };
     }
   }
+
+  /// Mobile-only parent login against the `app_parent_users` table
+  /// (`/mobile_apis/parent_login.php`). Bcrypt-verified on the server.
+  ///
+  /// [identifier] — username OR email (case-insensitive).
+  /// [password]   — plaintext, never logged.
+  ///
+  /// Returns a Map containing:
+  ///   • 'success': bool
+  ///   • 'data':    `Map<String, dynamic>` (the inner `result` block on success)
+  ///   • 'error':   String? error message on failure
+  static Future<Map<String, dynamic>> loginAppParent({
+    required String identifier,
+    required String password,
+  }) async {
+    try {
+      debugPrint(
+        'AuthRepository: Logging in app parent - identifier: $identifier',
+      );
+
+      final response = await ApiClient.postJson(
+        endpoint: '/mobile_apis/parent_login.php',
+        body: {
+          'identifier': identifier,
+          'password': password,
+        },
+      );
+
+      debugPrint('AuthRepository: API response received for parent login');
+
+      if (response['success'] != true) {
+        final err = response['error']?.toString();
+        return {
+          'success': false,
+          'error': (err == null || err.isEmpty)
+              ? 'Invalid username or password.'
+              : err,
+        };
+      }
+
+      final raw = response['result'];
+      if (raw is! Map<String, dynamic>) {
+        return {
+          'success': false,
+          'error': 'Unexpected login response shape.',
+        };
+      }
+      return {'success': true, 'data': raw};
+    } on ApiException catch (e) {
+      debugPrint('AuthRepository: ApiException for parent login: ${e.message}');
+      return {'success': false, 'error': e.message};
+    } catch (e) {
+      debugPrint('AuthRepository: Unexpected error in parent login: $e');
+      return {
+        'success': false,
+        'error': 'An error occurred in api: ${e.toString()}',
+      };
+    }
+  }
 }

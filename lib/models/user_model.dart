@@ -138,6 +138,11 @@ class UserModel {
         'updated_at',
         'childs',
         'roles',
+        // Mobile app_parent_users login (UserType.guardian on mobile).
+        'app_parent_id',
+        'app_parent_user_id',
+        'active_child_id',
+        'auth_source',
       ]) {
         if (map[k] != null) extra[k] = map[k];
       }
@@ -271,6 +276,62 @@ class UserModel {
       userType: userType,
       createdAt: createdAt,
       updatedAt: updatedAt,
+      additionalData: additionalData,
+    );
+  }
+
+  /// Build a guardian [UserModel] from the `/mobile_apis/parent_login.php`
+  /// response (the `result` object). This is the mobile-only login that
+  /// authenticates against `app_parent_users` and resolves an `app_parents`
+  /// profile; the `id` we store in [additionalData] is the `app_parents.id`,
+  /// which is the same identity every parent_link/* endpoint expects.
+  factory UserModel.fromAppParentLoginResult(Map<String, dynamic> result) {
+    int? asInt(Object? v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      return int.tryParse(v.toString());
+    }
+
+    final appParentId = asInt(result['app_parent_id']) ?? 0;
+    final appParentUserId = asInt(result['app_parent_user_id']);
+    final activeChildId = asInt(result['active_child_id']);
+    final username = (result['username'] ?? '').toString();
+    final email = (result['email'] ?? '').toString();
+    final name = (result['name'] ?? '').toString();
+    final phone = (result['phone'] ?? '').toString();
+
+    String? firstName;
+    String? lastName;
+    if (name.trim().isNotEmpty) {
+      final parts = name.trim().split(RegExp(r'\s+'));
+      firstName = parts.first;
+      if (parts.length > 1) lastName = parts.sublist(1).join(' ');
+    }
+
+    final additionalData = <String, dynamic>{
+      // `id` mirrors what every other guardian-aware getter already reads
+      // (e.g. AuthProvider._guardianParentId). Setting it to app_parents.id
+      // means all existing read paths keep working without branching.
+      'id': appParentId,
+      'app_parent_id': appParentId,
+      'app_parent_user_id': ?appParentUserId,
+      'username': username,
+      if (activeChildId != null && activeChildId > 0)
+        'active_child_id': activeChildId,
+      // No `users.id` in this flow — the mobile parent has no portal account.
+      'auth_source': 'app_parent_users',
+    };
+
+    return UserModel(
+      uid: appParentId.toString(),
+      email: email,
+      displayName: name.isNotEmpty ? name : (username.isNotEmpty ? username : email),
+      firstName: firstName,
+      lastName: lastName,
+      phoneNumber: phone.isNotEmpty ? phone : null,
+      userType: UserType.guardian,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
       additionalData: additionalData,
     );
   }

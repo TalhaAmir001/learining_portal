@@ -10,6 +10,7 @@ import 'package:learining_portal/providers/messages/chat_provider.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/constants.dart';
+import 'package:learining_portal/utils/widgets/messages/active_child_floating_bar.dart';
 import 'package:learining_portal/utils/widgets/messages/chat_input_bar.dart';
 import 'package:learining_portal/utils/widgets/messages/message_bubble.dart';
 import 'package:learining_portal/utils/widgets/messages/ticket_floating_bar.dart';
@@ -383,6 +384,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
+            // Active-child context bar:
+            //   • Guardian side → shows their own active child (in-memory).
+            //   • Staff side    → shows the other parent's active child when
+            //     the counterparty is a guardian (e.g. claimed Support thread).
+            // Hidden (SizedBox.shrink) in every other case.
+            ActiveChildFloatingBar(otherUser: otherUser),
             // Messages List
             Expanded(
               child: Consumer<ChatProvider>(

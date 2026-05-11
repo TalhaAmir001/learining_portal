@@ -28,11 +28,7 @@ class _ClassSummaryFlashcardSetsScreenState
   }
 
   int? _studentIdFromAuth(AuthProvider auth) {
-    if (auth.userType != UserType.student) return null;
-    final raw = auth.currentUser?.additionalData?['id'] ?? auth.currentUser?.id;
-    final n = raw is int ? raw : int.tryParse(raw?.toString() ?? '');
-    if (n != null && n > 0) return n;
-    return null;
+    return auth.effectiveStudentId();
   }
 
   Future<void> _load() async {

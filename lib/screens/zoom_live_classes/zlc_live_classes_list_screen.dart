@@ -37,7 +37,7 @@ class _ZlcLiveClassesListScreenState extends State<ZlcLiveClassesListScreen> {
         staffId: sid ?? 0,
       );
     } else {
-      final stu = zlcPortalStudentId(user);
+      final stu = zlcPortalStudentId(auth);
       if (stu != null) {
         list = await ZoomLiveClassesRepository.getLiveClasses(
           role: auth.userType == UserType.guardian ? 'guardian' : 'student',

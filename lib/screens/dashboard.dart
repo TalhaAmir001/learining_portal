@@ -21,6 +21,10 @@ import 'package:learining_portal/screens/announcements/announcement_posts_screen
 import 'package:learining_portal/screens/announcements/admin/admin_announcement_posts_screen.dart';
 import 'package:learining_portal/screens/class_summaries/class_summary_list_screen.dart';
 import 'package:learining_portal/screens/class_summary_flashcards/class_summary_flashcard_sets_screen.dart';
+import 'package:learining_portal/screens/term_feedback/term_feedback_screen.dart';
+import 'package:learining_portal/screens/smart_monitoring/smart_monitoring_screen.dart';
+import 'package:learining_portal/screens/parent_children/my_children_screen.dart';
+import 'package:learining_portal/screens/parent_children/widgets/child_picker_chip.dart';
 import 'package:learining_portal/utils/widgets/notice/notice_board_box.dart';
 import 'package:learining_portal/utils/widgets/welcome_section.dart';
 import 'package:learining_portal/utils/widgets/feature_guide_dialog.dart';
@@ -182,6 +186,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     BuildContext context,
     UserType? userType,
   ) {
+    final isSuperAdmin = context.read<AuthProvider>().isSuperAdmin;
+    final showStudent = userType == UserType.student || isSuperAdmin;
+    final showGuardian = userType == UserType.guardian || isSuperAdmin;
+    final showTeacher = userType == UserType.teacher || isSuperAdmin;
+    final showAdmin = userType == UserType.admin || isSuperAdmin;
+
     final isSupportUserType =
         userType == UserType.teacher ||
         userType == UserType.student ||
@@ -230,7 +240,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.student) {
+    if (showStudent) {
       items.add(
         DashboardItem(
           icon: Icons.campaign_rounded,
@@ -249,7 +259,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.student) {
+    if (showStudent) {
       items.add(
         DashboardItem(
           icon: Icons.article_rounded,
@@ -268,7 +278,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.student) {
+    if (showStudent) {
       items.add(
         DashboardItem(
           icon: Icons.style_rounded,
@@ -289,7 +299,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.admin) {
+    if (showAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.campaign_rounded,
@@ -308,7 +318,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.admin) {
+    if (showAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.school_rounded,
@@ -397,6 +407,76 @@ class _DashboardScreenState extends State<DashboardScreen>
               context,
               MaterialPageRoute<void>(
                 builder: (context) => const AcademicsHubScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // Term Feedback: admins and class teachers can rate students for a period.
+    if (userType == UserType.admin ||
+        userType == UserType.teacher ||
+        isSuperAdmin) {
+      items.add(
+        DashboardItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Term Feedback',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const TermFeedbackScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // Smart Monitoring: Super Admin only — mirrors `_is_super_admin()` gate
+    // in admin/Smartmonitoring.php on the web.
+    if (isSuperAdmin) {
+      items.add(
+        DashboardItem(
+          icon: Icons.insights_rounded,
+          title: 'Smart Monitoring',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const SmartMonitoringScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // My Children: guardian-only entry point. Lets a parent self-link their
+    // children and pick the active one. Hidden for everyone else.
+    if (userType == UserType.guardian) {
+      items.add(
+        DashboardItem(
+          icon: Icons.family_restroom_rounded,
+          title: 'My Children',
+          color: AppColors.primaryBlue,
+          gradient: const LinearGradient(
+            colors: [AppColors.primaryBlue, AppColors.secondaryPurple],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const MyChildrenScreen(),
               ),
             );
           },
@@ -598,7 +678,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 WelcomeSection(authProvider: authProvider),
-                                const SizedBox(height: 24),
+                                const SizedBox(height: 16),
+
+                                // Guardian-only: child picker chip (2+) and
+                                // empty-state banner (0 linked) live in a
+                                // single helper so the dashboard stays clean.
+                                _GuardianChildrenStrip(
+                                  authProvider: authProvider,
+                                ),
 
                                 // Notice Board (unread only in box; View All shows full list)
                                 NoticeBoardBox(
@@ -731,6 +818,196 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Guardian-only header strip:
+///   • zero children → "Add your child to see their dashboard" banner.
+///   • two or more   → [ChildPickerChip] + active-child name row.
+///
+/// Renders a [SizedBox.shrink] for non-guardians or guardians with exactly
+/// one child (one child = no need to pick one).
+class _GuardianChildrenStrip extends StatelessWidget {
+  const _GuardianChildrenStrip({required this.authProvider});
+
+  final AuthProvider authProvider;
+
+  @override
+  Widget build(BuildContext context) {
+    if (authProvider.userType != UserType.guardian) {
+      return const SizedBox.shrink();
+    }
+
+    final children = authProvider.linkedChildren;
+
+    // 0 linked → empty-state banner
+    if (children.isEmpty &&
+        !authProvider.isLoadingLinkedChildren) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: _AddYourChildBanner(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const MyChildrenScreen(),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // 2+ linked → "Active: …" row + picker chip
+    if (children.length >= 2) {
+      final selected = authProvider.selectedChild;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.primaryBlue.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppColors.primaryBlue.withOpacity(0.18),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.family_restroom_rounded,
+                color: AppColors.primaryBlue,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  selected != null
+                      ? 'Active: ${selected.fullName}'
+                      : 'Pick an active child to scope the app to one of '
+                          'your children.',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Filled "primary" variant of the picker (visually distinct
+              // from the gradient header chip used in dark backgrounds).
+              const _DashboardChildPickerButton(),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+}
+
+class _AddYourChildBanner extends StatelessWidget {
+  const _AddYourChildBanner({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surfaceWhite,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.primaryBlue.withOpacity(0.18)),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      AppColors.primaryBlue,
+                      AppColors.secondaryPurple,
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primaryBlue.withOpacity(0.22),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.person_add_alt_1_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Add your child',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Enter the 6-character code from your school to see '
+                      'your child\'s dashboard.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textSecondary.withOpacity(0.55),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Filled-button variant for the light dashboard banner. Wraps the standard
+/// [ChildPickerChip] inside a primary-coloured surface so the white text
+/// inside the chip stays legible.
+class _DashboardChildPickerButton extends StatelessWidget {
+  const _DashboardChildPickerButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.primaryBlue,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: const ChildPickerChip(compact: true),
     );
   }
 }

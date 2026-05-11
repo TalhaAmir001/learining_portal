@@ -57,6 +57,7 @@ dependencies:
   html_unescape: ^2.0.0
   html_editor_enhanced: ^2.7.1
   mailer: ^7.1.0
+  fl_chart: ^1.2.0
 
 dev_dependencies:
   flutter_test:
