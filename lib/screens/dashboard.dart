@@ -21,6 +21,7 @@ import 'package:learining_portal/screens/announcements/announcement_posts_screen
 import 'package:learining_portal/screens/announcements/admin/admin_announcement_posts_screen.dart';
 import 'package:learining_portal/screens/class_summaries/class_summary_list_screen.dart';
 import 'package:learining_portal/screens/class_summary_flashcards/class_summary_flashcard_sets_screen.dart';
+import 'package:learining_portal/screens/term_feedback/child_term_report_screen.dart';
 import 'package:learining_portal/screens/term_feedback/term_feedback_screen.dart';
 import 'package:learining_portal/screens/smart_monitoring/smart_monitoring_screen.dart';
 import 'package:learining_portal/screens/parent_children/my_children_screen.dart';
@@ -259,11 +260,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (showStudent) {
+    if (showStudent && !isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.article_rounded,
-          title: 'Class Summaries',
+          title: 'Class Summary',
           color: AppColors.primaryBlue,
           gradient: const LinearGradient(
             colors: [AppColors.primaryBlue, AppColors.accentTeal],
@@ -278,7 +279,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (showStudent) {
+    if (showStudent && !isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.style_rounded,
@@ -299,7 +300,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (showAdmin) {
+    // Announcement Posts, Student Informations, Communicate and Academics
+    // are restricted to Super Admin accounts only. Regular admins/teachers/
+    // students/guardians do NOT see these tiles.
+    if (isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.campaign_rounded,
@@ -318,7 +322,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (showAdmin) {
+    if (isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.school_rounded,
@@ -337,6 +341,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           },
         ),
       );
+    }
+
+    if (showAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.folder_shared_rounded,
@@ -355,6 +362,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           },
         ),
       );
+    }
+
+    if (isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.forum_rounded,
@@ -373,6 +383,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           },
         ),
       );
+    }
+
+    if (showAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.event_available_rounded,
@@ -393,7 +406,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       );
     }
 
-    if (userType == UserType.admin || userType == UserType.teacher) {
+    if (isSuperAdmin) {
       items.add(
         DashboardItem(
           icon: Icons.calendar_month_rounded,
@@ -477,6 +490,27 @@ class _DashboardScreenState extends State<DashboardScreen>
               context,
               MaterialPageRoute<void>(
                 builder: (context) => const MyChildrenScreen(),
+              ),
+            );
+          },
+        ),
+      );
+
+      // Term Report: guardian-only view of the active child's term feedback.
+      // Read-only mirror of the staff-side Term Feedback feature.
+      items.add(
+        DashboardItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Term Report',
+          color: AppColors.accentTeal,
+          gradient: const LinearGradient(
+            colors: [AppColors.accentTeal, AppColors.primaryBlue],
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (context) => const ChildTermReportScreen(),
               ),
             );
           },

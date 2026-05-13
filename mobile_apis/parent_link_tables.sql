@@ -157,3 +157,73 @@ CREATE TABLE IF NOT EXISTS `app_parent_users` (
   UNIQUE KEY `uniq_app_parent_users_username` (`username`),
   KEY `idx_app_parent_users_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------- Leaving notices (4-week notice policy) -----------------------
+-- A parent can submit one or more leaving notices from the mobile app
+-- (before logging in). Each submission captures the credentials used
+-- (resolved to app_parent_id), the typed reason, and the requested
+-- leaving date — which the server validates is at least 28 days in the
+-- future before accepting. Audit trail: we keep every submission rather
+-- than overwriting, so admins can see retraction / re-submission history.
+CREATE TABLE IF NOT EXISTS `app_parent_leaving_notices` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `app_parent_id` int(11) NOT NULL,
+  `app_parent_user_id` int(11) DEFAULT NULL,
+  `identifier_used` varchar(191) NOT NULL DEFAULT ''
+    COMMENT 'username or email the parent typed when submitting',
+  `reason` text NOT NULL,
+  `leaving_date` date NOT NULL
+    COMMENT 'requested last day of access (server enforces >= today + 28d)',
+  `submitted_at` datetime NOT NULL,
+  `submission_ip` varchar(64) DEFAULT NULL,
+  `status` varchar(32) NOT NULL DEFAULT 'submitted'
+    COMMENT 'submitted | acknowledged | cancelled — admin-managed lifecycle',
+  `active_student_id` int(11) DEFAULT NULL
+    COMMENT 'students.id the parent had active when submitting (nullable)',
+  `active_student_label` varchar(191) NOT NULL DEFAULT ''
+    COMMENT 'frozen "First Last (ADM-1234)" snapshot for the audit trail',
+  PRIMARY KEY (`id`),
+  KEY `idx_app_parent_leaving_parent` (`app_parent_id`),
+  KEY `idx_app_parent_leaving_date` (`leaving_date`),
+  KEY `idx_app_parent_leaving_student` (`active_student_id`),
+  CONSTRAINT `fk_app_parent_leaving_parent`
+    FOREIGN KEY (`app_parent_id`) REFERENCES `app_parents` (`id`)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------- Idempotent column adds for existing deployments --------------
+-- For installs that already have `app_parent_leaving_notices` without the
+-- new active-student columns, add them in-place. Same pattern as the other
+-- pl_* migration procs in this file.
+DELIMITER $$
+DROP PROCEDURE IF EXISTS `pl_add_leaving_notice_active_child_cols` $$
+CREATE PROCEDURE `pl_add_leaving_notice_active_child_cols`()
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'app_parent_leaving_notices'
+      AND COLUMN_NAME  = 'active_student_id'
+  ) THEN
+    ALTER TABLE `app_parent_leaving_notices`
+      ADD COLUMN `active_student_id` INT(11) DEFAULT NULL
+        COMMENT 'students.id the parent had active when submitting (nullable)';
+    ALTER TABLE `app_parent_leaving_notices`
+      ADD KEY `idx_app_parent_leaving_student` (`active_student_id`);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'app_parent_leaving_notices'
+      AND COLUMN_NAME  = 'active_student_label'
+  ) THEN
+    ALTER TABLE `app_parent_leaving_notices`
+      ADD COLUMN `active_student_label` VARCHAR(191) NOT NULL DEFAULT ''
+        COMMENT 'frozen "First Last (ADM-1234)" snapshot for the audit trail';
+  END IF;
+END $$
+DELIMITER ;
+
+CALL `pl_add_leaving_notice_active_child_cols`();
+DROP PROCEDURE IF EXISTS `pl_add_leaving_notice_active_child_cols`;

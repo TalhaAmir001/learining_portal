@@ -138,6 +138,9 @@ class UserModel {
         'updated_at',
         'childs',
         'roles',
+        // Persisted at doc top level via [toFirestore] spread of additionalData;
+        // must be listed here or superadmin loses dashboard/API gates after restart.
+        'is_superadmin',
         // Mobile app_parent_users login (UserType.guardian on mobile).
         'app_parent_id',
         'app_parent_user_id',
@@ -232,6 +235,11 @@ class UserModel {
       'gender': result.gender,
       'dob': result.dob,
       'roles': result.roles,
+      // AuthProvider.isSuperAdmin keys off this flag — drives Smart
+      // Monitoring + the Super-Admin-only dashboard tiles. Portal super
+      // admins log in through the regular "Admin" tile, so we have to
+      // detect them from the roles map and surface the flag here.
+      'is_superadmin': result.isSuperAdmin,
       'is_active': result.isActive,
       'created_at': result.createdAt,
       'updated_at': result.updatedAt,

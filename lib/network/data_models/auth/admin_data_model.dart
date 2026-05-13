@@ -359,27 +359,52 @@ class AdminResult {
     return name ?? surname ?? '';
   }
 
+  /// Normalises a role key for comparison: trims, lowercases, and treats
+  /// '_' / '-' as spaces so 'Super Admin', 'super_admin', 'super-admin' and
+  /// 'SUPER ADMIN' all collapse to the canonical 'super admin'. Matches the
+  /// case-insensitive comparison the web's `_is_super_admin()` uses.
+  static String _normaliseRoleKey(String raw) =>
+      raw.trim().toLowerCase().replaceAll(RegExp(r'[_-]+'), ' ');
+
   /// Checks if user has Teacher role
   bool get isTeacher {
     if (roles == null) return false;
-    return roles!.containsKey('Teacher');
+    for (final k in roles!.keys) {
+      if (_normaliseRoleKey(k) == 'teacher') return true;
+    }
+    return false;
   }
 
-  /// Checks if user has Admin role
+  /// Checks if user has Admin role. Super admins also satisfy this gate —
+  /// they're a superset of Admin in the portal, so the mobile app's
+  /// "Sign in as Admin" tile should accept them too. Without this rule the
+  /// staff-login API rejects them with "no admin privileges".
   bool get isAdmin {
     if (roles == null) return false;
-    return roles!.containsKey('Admin') || roles!.containsKey('admin');
+    for (final k in roles!.keys) {
+      final norm = _normaliseRoleKey(k);
+      if (norm == 'admin' || norm == 'super admin') return true;
+    }
+    return false;
   }
 
-  /// Gets the primary role (Teacher or Admin)
+  /// True when the user has the dedicated "Super Admin" role row. Mirrors
+  /// `_is_super_admin()` on the web (role name == "super admin",
+  /// case-insensitive, underscore-/hyphen-tolerant).
+  bool get isSuperAdmin {
+    if (roles == null) return false;
+    for (final k in roles!.keys) {
+      if (_normaliseRoleKey(k) == 'super admin') return true;
+    }
+    return false;
+  }
+
+  /// Gets the primary role (Super Admin > Admin > Teacher)
   String? get primaryRole {
     if (roles == null) return null;
-    if (roles!.containsKey('Admin') || roles!.containsKey('admin')) {
-      return 'admin';
-    }
-    if (roles!.containsKey('Teacher')) {
-      return 'teacher';
-    }
+    if (isSuperAdmin) return 'super_admin';
+    if (isAdmin) return 'admin';
+    if (isTeacher) return 'teacher';
     return roles!.keys.first;
   }
 }

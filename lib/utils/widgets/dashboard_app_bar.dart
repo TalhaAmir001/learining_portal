@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:learining_portal/network/data_models/parent_link/parent_link_models.dart';
+import 'package:learining_portal/network/domain/parent_leaving_repository.dart';
 import 'package:learining_portal/providers/auth_provider.dart';
+import 'package:learining_portal/screens/auth/widgets/leaving_notice_dialogs.dart';
 import 'package:learining_portal/screens/profile/profile_details.dart';
 import 'package:learining_portal/screens/profile/settings.dart';
 import 'package:learining_portal/utils/app_colors.dart';
@@ -319,164 +322,260 @@ class DashboardAppBar extends StatelessWidget {
     );
   }
 
-  void _showProfileMenu(BuildContext context, AuthProvider authProvider) {
+  Future<void> _showProfileMenu(
+    BuildContext context,
+    AuthProvider authProvider,
+  ) async {
+    // For guardians, pre-resolve "is your subscription past its leaving
+    // date?" before opening the sheet — that way the End Subscription tile
+    // renders in the right colour on first paint. SharedPreferences is
+    // local so this is a sub-frame round trip.
+    bool isSubscriptionEnded = false;
+    if (authProvider.userType == UserType.guardian) {
+      final pid = authProvider.guardianParentId;
+      if (pid != null) {
+        isSubscriptionEnded =
+            await ParentLeavingRepository.isSubscriptionEnded(appParentId: pid);
+      }
+    }
+    if (!context.mounted) return;
+
+    // Capture the dashboard context (alive for the whole session) — used
+    // by tiles that need to open additional routes *after* this bottom
+    // sheet is popped (e.g. the End Subscription dialog flow). The sheet
+    // builder's own context becomes unmounted the moment Navigator.pop()
+    // runs, which would otherwise kill any follow-up showDialog calls.
+    final hostContext = context;
+
     showModalBottomSheet(
       context: context,
+      // Without isScrollControlled the sheet caps at ~9/16 of the screen,
+      // which on shorter phones (or with larger system font scales) is
+      // smaller than the guardian's full menu (header + 4 tiles + dividers)
+      // and causes a RenderFlex overflow. Letting it grow + capping at 85 %
+      // of screen height lets the inner scroll view kick in when needed.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
       ),
       backgroundColor: Colors.transparent,
-      builder: (context) => _buildProfileMenu(context, authProvider),
+      builder: (sheetContext) => _buildProfileMenu(
+        sheetContext,
+        authProvider,
+        hostContext: hostContext,
+        isSubscriptionEnded: isSubscriptionEnded,
+      ),
     );
   }
 
-  Widget _buildProfileMenu(BuildContext context, AuthProvider authProvider) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, AppColors.backgroundLight],
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.2),
-            blurRadius: 20,
-            offset: const Offset(0, -5),
+  Widget _buildProfileMenu(
+    BuildContext context,
+    AuthProvider authProvider, {
+    required BuildContext hostContext,
+    bool isSubscriptionEnded = false,
+  }) {
+    final maxSheetHeight = MediaQuery.of(context).size.height * 0.85;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxSheetHeight),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.white, AppColors.backgroundLight],
           ),
-        ],
-      ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.primaryBlue.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primaryBlue.withOpacity(0.2),
+              blurRadius: 20,
+              offset: const Offset(0, -5),
             ),
+          ],
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryBlue.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
 
-            // Profile Header
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                children: [
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      gradient: AppColors.primaryGradient,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primaryBlue.withOpacity(0.3),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        authProvider.userName?.substring(0, 1).toUpperCase() ??
-                            authProvider.userEmail
-                                ?.substring(0, 1)
-                                .toUpperCase() ??
-                            'U',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
+              // Everything below the handle scrolls if the device is too
+              // short to display the full menu — guarantees we never bust
+              // the sheet's max-height constraint regardless of the user's
+              // type, font scale, or display size.
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Profile Header
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                gradient: AppColors.primaryGradient,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primaryBlue.withOpacity(0.3),
+                                    blurRadius: 10,
+                                  ),
+                                ],
+                              ),
+                              child: Center(
+                                child: Text(
+                                  authProvider.userName
+                                          ?.substring(0, 1)
+                                          .toUpperCase() ??
+                                      authProvider.userEmail
+                                          ?.substring(0, 1)
+                                          .toUpperCase() ??
+                                      'U',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    authProvider.userName ?? 'User',
+                                    style: Theme.of(context).textTheme.titleLarge
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    authProvider.userEmail ?? '',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          authProvider.userName ?? 'User',
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.textPrimary,
-                              ),
+
+                      const Divider(height: 1, indent: 24, endIndent: 24),
+
+                      _buildMenuItem(
+                        icon: Icons.person_outline_rounded,
+                        title: 'My Profile',
+                        color: AppColors.primaryBlue,
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ProfileDetailsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      _buildMenuItem(
+                        icon: Icons.settings_outlined,
+                        title: 'Settings',
+                        color: AppColors.secondaryPurple,
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const SettingsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      _buildMenuItem(
+                        icon: Icons.delete_outline_rounded,
+                        title: 'Request delete account',
+                        color: AppColors.accentTeal,
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openAccountDeletionUrl(context);
+                        },
+                      ),
+
+                      // End Subscription — guardian-only. Sits directly
+                      // above Logout so it shares the same "leaving the
+                      // portal" mental model. The tile turns grey on/after
+                      // the parent's previously-submitted leaving date.
+                      if (authProvider.userType == UserType.guardian &&
+                          authProvider.guardianParentId != null)
+                        _buildMenuItem(
+                          icon: isSubscriptionEnded
+                              ? Icons.event_available_rounded
+                              : Icons.event_busy_rounded,
+                          title: 'End Subscription',
+                          color: isSubscriptionEnded
+                              ? (Colors.grey[600] ?? Colors.grey)
+                              : Colors.red[600] ?? Colors.red,
+                          onTap: () {
+                            final parentId = authProvider.guardianParentId!;
+                            // Capture *now* so the snapshot doesn't drift if
+                            // the parent switches active child between tap
+                            // and dialog open.
+                            final activeChild = authProvider.selectedChild;
+                            Navigator.pop(context);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!hostContext.mounted) return;
+                              _openEndSubscriptionFlow(
+                                hostContext,
+                                parentId,
+                                activeChild: activeChild,
+                              );
+                            });
+                          },
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          authProvider.userEmail ?? '',
-                          style: TextStyle(color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
+
+                      const Divider(height: 1, indent: 24, endIndent: 24),
+
+                      _buildMenuItem(
+                        icon: Icons.logout_rounded,
+                        title: 'Logout',
+                        color: Colors.red,
+                        showBorder: false,
+                        onTap: () {
+                          Navigator.pop(context);
+                          _showLogoutConfirmation(context);
+                        },
+                      ),
+
+                      const SizedBox(height: 20),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-
-            const Divider(height: 1, indent: 24, endIndent: 24),
-
-            // Menu Items
-            _buildMenuItem(
-              icon: Icons.person_outline_rounded,
-              title: 'My Profile',
-              color: AppColors.primaryBlue,
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ProfileDetailsScreen(),
-                  ),
-                );
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.settings_outlined,
-              title: 'Settings',
-              color: AppColors.secondaryPurple,
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SettingsScreen(),
-                  ),
-                );
-              },
-            ),
-            _buildMenuItem(
-              icon: Icons.delete_outline_rounded,
-              title: 'Request delete account',
-              color: AppColors.accentTeal,
-              onTap: () {
-                Navigator.pop(context);
-                _openAccountDeletionUrl(context);
-              },
-            ),
-
-            const Divider(height: 1, indent: 24, endIndent: 24),
-
-            // Logout Button
-            _buildMenuItem(
-              icon: Icons.logout_rounded,
-              title: 'Logout',
-              color: Colors.red,
-              showBorder: false,
-              onTap: () {
-                Navigator.pop(context);
-                _showLogoutConfirmation(context);
-              },
-            ),
-
-            const SizedBox(height: 20),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -523,6 +622,22 @@ class DashboardAppBar extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+
+  /// Drives the two-step Leaving Notice dialog flow and shows the confirmation
+  /// snackbar on success. Called from the End Subscription tile in the
+  /// profile bottom sheet — by the time this runs, the sheet itself has
+  /// already been popped, so the dialogs render against the dashboard.
+  Future<void> _openEndSubscriptionFlow(
+    BuildContext context,
+    int appParentId, {
+    ParentChild? activeChild,
+  }) async {
+    await showEndSubscriptionFlow(
+      context: context,
+      appParentId: appParentId,
+      activeChild: activeChild,
     );
   }
 

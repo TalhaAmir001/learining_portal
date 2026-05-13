@@ -41,5 +41,20 @@ class ClassSummaryFlashcardsRepository {
       );
     }
   }
+
+  static Future<Map<String, dynamic>> completeDeckForStudent({
+    required int studentId,
+    required int setId,
+  }) async {
+    try {
+      return await ApiClient.postJson(
+        endpoint: '/mobile_apis/complete_class_summary_flashcard_student.php',
+        body: {'student_id': studentId, 'set_id': setId},
+      );
+    } on ApiException catch (e) {
+      debugPrint('ClassSummaryFlashcardsRepository completeDeckForStudent: ${e.message}');
+      return {'success': false, 'error': e.message};
+    }
+  }
 }
 

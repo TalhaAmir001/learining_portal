@@ -526,6 +526,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.0"
+  flutter_pdfview:
+    dependency: "direct main"
+    description:
+      name: flutter_pdfview
+      sha256: "5b80e89f3ba6e478d1e897543c9634508284ad73476807febc188378986b69ee"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.4"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
@@ -539,6 +547,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_tts:
+    dependency: "direct main"
+    description:
+      name: flutter_tts
+      sha256: ce5eb209b40e95f2f4a1397116c87ab2fcdff32257d04ed7a764e75894c03775
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.2.5"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
@@ -609,7 +625,7 @@ packages:
     source: hosted
     version: "1.0.1"
   html:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: html
       sha256: "6d1264f2dffa1b1101c25a91dff0dc2daee4c18e87cd8538729773c073dbf602"

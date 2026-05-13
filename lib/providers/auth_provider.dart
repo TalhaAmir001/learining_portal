@@ -221,6 +221,12 @@ class AuthProvider with ChangeNotifier {
     return (n != null && n > 0) ? n : null;
   }
 
+  /// Public accessor for the guardian's `app_parents.id`. Used by features
+  /// outside this provider (e.g. the profile menu's End Subscription flow)
+  /// that need to call parent_link/* APIs with the logged-in parent's id.
+  /// Returns null for non-guardians.
+  int? get guardianParentId => _guardianParentId;
+
   /// Reload the guardian's linked children from the server. Cheap to call —
   /// no-op for non-guardians. Updates [linkedChildren] and [selectedChildId]
   /// based on the server's `active_child_id` (server is the source of truth;

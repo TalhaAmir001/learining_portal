@@ -514,6 +514,7 @@ class _SmartMonitoringScreenState extends State<SmartMonitoringScreen> {
     final overview = _overview;
     final classes = overview?.classlist ?? const <SmartMonitoringClass>[];
     return DropdownButtonFormField<int>(
+      isExpanded: true,
       value: _classId == 0 ? 0 : (classes.any((c) => c.id == _classId) ? _classId : 0),
       decoration: SiChrome.inputDecoration(
         context,
@@ -521,11 +522,18 @@ class _SmartMonitoringScreenState extends State<SmartMonitoringScreen> {
         prefixIcon: const Icon(Icons.school_rounded, size: 20),
       ),
       items: [
-        const DropdownMenuItem(value: 0, child: Text('All classes')),
+        const DropdownMenuItem(
+          value: 0,
+          child: Text('All classes', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         ...classes.map(
           (c) => DropdownMenuItem(
             value: c.id,
-            child: Text(c.name, overflow: TextOverflow.ellipsis),
+            child: Text(
+              c.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ],
@@ -547,6 +555,7 @@ class _SmartMonitoringScreenState extends State<SmartMonitoringScreen> {
         ? 0
         : (_sections.any((s) => s.id == _sectionId) ? _sectionId : 0);
     return DropdownButtonFormField<int>(
+      isExpanded: true,
       value: value,
       decoration: SiChrome.inputDecoration(
         context,
@@ -554,11 +563,18 @@ class _SmartMonitoringScreenState extends State<SmartMonitoringScreen> {
         prefixIcon: const Icon(Icons.layers_rounded, size: 20),
       ),
       items: [
-        const DropdownMenuItem(value: 0, child: Text('All sections')),
+        const DropdownMenuItem(
+          value: 0,
+          child: Text('All sections', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         ..._sections.map(
           (s) => DropdownMenuItem(
             value: s.id,
-            child: Text(s.name, overflow: TextOverflow.ellipsis),
+            child: Text(
+              s.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ],
@@ -570,6 +586,7 @@ class _SmartMonitoringScreenState extends State<SmartMonitoringScreen> {
 
   Widget _statusDropdown() {
     return DropdownButtonFormField<String>(
+      isExpanded: true,
       value: _status,
       decoration: SiChrome.inputDecoration(
         context,

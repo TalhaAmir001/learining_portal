@@ -211,16 +211,8 @@ class _AuthScreenState extends State<AuthScreen>
         ),
         const SizedBox(height: 48),
 
-        // Student Login Button
-        UserTypeButton(
-          userType: UserType.student,
-          icon: Icons.person_outline,
-          title: 'Sign in as Student',
-          subtitle: 'Access your courses and learning materials',
-          color: Colors.blue,
-          onTap: () => _selectUserType(UserType.student),
-        ),
-        const SizedBox(height: 20),
+        // Student login is currently disabled in the app; only Guardian,
+        // Teacher and Admin entry points are shown on the launcher.
 
         // Guardian Login Button
         UserTypeButton(
@@ -367,8 +359,8 @@ class _AuthScreenState extends State<AuthScreen>
               if (value == null || value.isEmpty) {
                 return 'Please enter your password';
               }
-              if (value.length < 6) {
-                return 'Password must be at least 6 characters';
+              if (value.length < 5) {
+                return 'Password must be at least 5 characters';
               }
               return null;
             },
