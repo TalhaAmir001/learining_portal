@@ -85,6 +85,48 @@ function pl_require_api_secret($body) {
     }
 }
 
+/** True when the Flutter app (or any client) sent X-Learning-Portal-App. */
+function pl_is_learning_portal_mobile_app_request() {
+    $app_hdr = isset($_SERVER['HTTP_X_LEARNING_PORTAL_APP'])
+        ? trim((string) $_SERVER['HTTP_X_LEARNING_PORTAL_APP'])
+        : '';
+    return ($app_hdr !== '' && $app_hdr !== '0' && strtolower($app_hdr) !== 'false');
+}
+
+/**
+ * Whether mobile-app sign-in is blocked for this actor (see mobile_app_access_revocation.sql).
+ *
+ * @param string $actor_type staff|portal_user|app_parent_user
+ * @param int    $actor_id
+ */
+function pl_is_mobile_app_access_revoked($mysqli, $actor_type, $actor_id) {
+    $actor_type = preg_replace('/[^a-z_]/', '', strtolower((string) $actor_type));
+    if (!in_array($actor_type, array('staff', 'portal_user', 'app_parent_user'), true)) {
+        return false;
+    }
+    $actor_id = (int) $actor_id;
+    if ($actor_id < 1) {
+        return false;
+    }
+    $rvt = $mysqli->query("SHOW TABLES LIKE 'mobile_app_access_revocation'");
+    if (!$rvt || $rvt->num_rows === 0) {
+        if ($rvt) {
+            $rvt->free();
+        }
+        return false;
+    }
+    $rvt->free();
+    $type_esc = $mysqli->real_escape_string($actor_type);
+    $rvc      = $mysqli->query(
+        "SELECT id FROM mobile_app_access_revocation WHERE actor_type='$type_esc' AND actor_id=$actor_id LIMIT 1"
+    );
+    $revoked = ($rvc && $rvc->num_rows > 0);
+    if ($rvc) {
+        $rvc->free();
+    }
+    return $revoked;
+}
+
 function pl_current_session_id($mysqli) {
     $sr = $mysqli->query('SELECT session_id FROM sch_settings ORDER BY id ASC LIMIT 1');
     if (!$sr || $sr->num_rows === 0) {

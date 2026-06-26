@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/network/domain/auth_repository.dart';
+import 'package:learining_portal/services/mobile_app_access_service.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
@@ -54,6 +55,10 @@ class AuthProvider with ChangeNotifier {
 
   /// Callback for when a new notice is broadcast (notice board); app can refresh notice list.
   Function(Map<String, dynamic>)? onNewNoticeReceived;
+
+  Timer? _mobileAccessCheckTimer;
+  bool _mobileAccessRevocationInProgress = false;
+  static const Duration _mobileAccessCheckInterval = Duration(seconds: 45);
 
   // Constructor for normal initialization
   AuthProvider() {
@@ -111,6 +116,7 @@ class AuthProvider with ChangeNotifier {
       if (currentUser.userType == UserType.guardian) {
         _hydrateLinkedChildrenFromCacheThenRefresh();
       }
+      _startMobileAccessMonitoring();
     }
   }
 
@@ -574,6 +580,92 @@ class AuthProvider with ChangeNotifier {
 
   bool get isWebSocketConnected => _isWebSocketConnected;
 
+  /// Maps the logged-in user to the mobile-app revocation actor (see
+  /// mobile_app_access_revocation.actor_type / actor_id).
+  ({String type, int id})? get _mobileAccessActor {
+    final user = _currentUser;
+    if (user == null) return null;
+
+    int? parsePositiveId(Object? raw) {
+      if (raw == null) return null;
+      if (raw is int) return raw > 0 ? raw : null;
+      final n = int.tryParse(raw.toString());
+      return (n != null && n > 0) ? n : null;
+    }
+
+    switch (user.userType) {
+      case UserType.guardian:
+        if (user.additionalData?['auth_source']?.toString() == 'app_parent_users') {
+          final appParentUserId =
+              parsePositiveId(user.additionalData?['app_parent_user_id']);
+          if (appParentUserId != null) {
+            return (type: 'app_parent_user', id: appParentUserId);
+          }
+        }
+        final portalParentId = parsePositiveId(user.additionalData?['id']);
+        if (portalParentId != null) {
+          return (type: 'portal_user', id: portalParentId);
+        }
+        return null;
+      case UserType.student:
+        final portalUserId = parsePositiveId(user.additionalData?['id']);
+        if (portalUserId != null) {
+          return (type: 'portal_user', id: portalUserId);
+        }
+        return null;
+      case UserType.teacher:
+      case UserType.admin:
+        final staffId = user.portalStaffId;
+        if (staffId != null && staffId > 0) {
+          return (type: 'staff', id: staffId);
+        }
+        return null;
+    }
+  }
+
+  void _startMobileAccessMonitoring() {
+    if (!_isAuthenticated || _currentUser == null) return;
+    if (_mobileAccessActor == null) return;
+
+    _mobileAccessCheckTimer?.cancel();
+    _mobileAccessCheckTimer = Timer.periodic(
+      _mobileAccessCheckInterval,
+      (_) => unawaited(enforceMobileAppAccessIfRevoked()),
+    );
+    unawaited(enforceMobileAppAccessIfRevoked());
+  }
+
+  void _stopMobileAccessMonitoring() {
+    _mobileAccessCheckTimer?.cancel();
+    _mobileAccessCheckTimer = null;
+  }
+
+  /// While logged in, verify the account has not been revoked on the server.
+  /// Signs out and surfaces [MobileAppAccessService.revokedMessage] when blocked.
+  Future<void> enforceMobileAppAccessIfRevoked() async {
+    if (!_isAuthenticated || _currentUser == null) return;
+    if (_mobileAccessRevocationInProgress) return;
+
+    final actor = _mobileAccessActor;
+    if (actor == null) return;
+
+    final revoked = await MobileAppAccessService.isAccessRevoked(
+      actorType: actor.type,
+      actorId: actor.id,
+    );
+    if (!revoked || !_isAuthenticated) return;
+
+    _mobileAccessRevocationInProgress = true;
+    try {
+      _stopMobileAccessMonitoring();
+      await logout();
+      _errorMessage = MobileAppAccessService.revokedMessage;
+      notifyListeners();
+    } finally {
+      _mobileAccessRevocationInProgress = false;
+    }
+  }
+
   // Convert UserType enum to string
   String _userTypeToString(UserType userType) {
     switch (userType) {
@@ -956,6 +1048,7 @@ class AuthProvider with ChangeNotifier {
             debugPrint('Error initializing WebSocket after superadmin login: $error');
           });
 
+          _startMobileAccessMonitoring();
           _errorMessage = null;
           _isLoading = false;
           notifyListeners();
@@ -1055,6 +1148,7 @@ class AuthProvider with ChangeNotifier {
         // Don't fail login if WebSocket connection fails
       });
 
+      _startMobileAccessMonitoring();
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -1148,6 +1242,7 @@ class AuthProvider with ChangeNotifier {
         }));
       }
 
+      _startMobileAccessMonitoring();
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -1206,6 +1301,7 @@ class AuthProvider with ChangeNotifier {
         debugPrint('Error refreshing linked children after parent login: $e');
       }));
 
+      _startMobileAccessMonitoring();
       _errorMessage = null;
       _isLoading = false;
       notifyListeners();
@@ -1238,6 +1334,7 @@ class AuthProvider with ChangeNotifier {
   // Sign out (all user types: student, guardian, teacher, admin)
   Future<void> logout() async {
     try {
+      _stopMobileAccessMonitoring();
       // Stop maintaining WebSocket connection (but don't force disconnect)
       _shouldMaintainConnection = false;
       if (_wsClient != null) {
@@ -1309,6 +1406,7 @@ class AuthProvider with ChangeNotifier {
               );
             }));
           }
+          _startMobileAccessMonitoring();
         } else {
           // User data not found in Firestore, clear SharedPreferences
           await _clearUserIdFromSharedPreferences();
@@ -1431,6 +1529,7 @@ class AuthProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _stopMobileAccessMonitoring();
     // Only force disconnect if provider is being disposed
     // In normal app lifecycle, connection will be maintained
     // This is typically only called when app is completely terminated

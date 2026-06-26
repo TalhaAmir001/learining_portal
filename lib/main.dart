@@ -349,6 +349,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             debugPrint('Main: Error refreshing FCM token: $error');
           },
         );
+        authProvider.enforceMobileAppAccessIfRevoked().catchError((error) {
+          debugPrint('Main: Error checking mobile app access: $error');
+        });
       }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {

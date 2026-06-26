@@ -111,6 +111,16 @@ try {
         }
     }
 
+    $uid = (int) ($user_row['id'] ?? 0);
+    if (pl_is_learning_portal_mobile_app_request() && $uid > 0
+        && pl_is_mobile_app_access_revoked($mysqli, 'app_parent_user', $uid)) {
+        $mysqli->close();
+        pl_json_out([
+            'success' => false,
+            'error'   => 'Your access to the Learning Portal mobile app has been disabled. Please contact the school office.',
+        ]);
+    }
+
     // Pull the linked app_parents row — the actual identity the other
     // endpoints care about.
     $app_parent_id = (int) ($user_row['app_parent_id'] ?? 0);
@@ -134,8 +144,20 @@ try {
     $pr->free();
 
     // Track "last activity" — useful for the admin even without a session.
-    $uid = (int) $user_row['id'];
     $mysqli->query("UPDATE app_parent_users SET updated_at = NOW() WHERE id = $uid LIMIT 1");
+
+    $app_hdr = isset($_SERVER['HTTP_X_LEARNING_PORTAL_APP']) ? trim((string) $_SERVER['HTTP_X_LEARNING_PORTAL_APP']) : '';
+    if ($app_hdr !== '' && $app_hdr !== '0' && strtolower($app_hdr) !== 'false' && $uid > 0) {
+        $tbl = $mysqli->query("SHOW TABLES LIKE 'mobile_app_login_log'");
+        if ($tbl && $tbl->num_rows > 0) {
+            $tbl->free();
+            $mysqli->query(
+                "INSERT INTO mobile_app_login_log (created_at, actor_type, actor_id) VALUES (NOW(), 'app_parent_user', $uid)"
+            );
+        } elseif ($tbl) {
+            $tbl->free();
+        }
+    }
 
     $mysqli->close();
     pl_json_out([

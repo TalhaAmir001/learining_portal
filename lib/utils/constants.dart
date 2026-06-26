@@ -16,7 +16,7 @@ const String prefsKeyUserType = 'current_user_type';
 
 /// Opened from the dashboard profile menu (“Request delete account”). Set to your live form or policy URL.
 const String accountDeletionRequestUrl =
-    'https://portal.gcsewithrosi.co.uk/request-account-deletion';
+    'https://portal.gcsewithrosi.co.uk/account-deletion-request';
 
 /// Hard-coded SuperAdmin login (bypasses role gating in-app).
 ///

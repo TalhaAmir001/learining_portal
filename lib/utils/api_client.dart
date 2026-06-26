@@ -4,7 +4,12 @@ import 'package:http/http.dart' as http;
 
 class ApiClient {
   static const String baseUrl = 'https://portal.gcsewithrosi.co.uk';
-  
+
+  /// Sent on every request so the portal can attribute traffic to the mobile app (e.g. sign-in stats).
+  static const Map<String, String> _learningPortalAppHeaders = {
+    'X-Learning-Portal-App': '1',
+  };
+
   // Timeout duration for requests
   static const Duration timeoutDuration = Duration(seconds: 30);
 
@@ -19,6 +24,7 @@ class ApiClient {
       final defaultHeaders = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json',
+        ..._learningPortalAppHeaders,
         if (headers != null) ...headers,
       };
       final encodedBody = body.entries
@@ -47,6 +53,7 @@ class ApiClient {
       final defaultHeaders = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        ..._learningPortalAppHeaders,
         if (headers != null) ...headers,
       };
       final encodedBody = json.encode(body);
@@ -82,6 +89,7 @@ class ApiClient {
 
       final defaultHeaders = {
         'Accept': 'application/json',
+        ..._learningPortalAppHeaders,
         if (headers != null) ...headers,
       };
 
@@ -131,6 +139,7 @@ class ApiClient {
       final req = http.MultipartRequest('POST', uri);
       req.headers.addAll({
         'Accept': 'application/json',
+        ..._learningPortalAppHeaders,
         if (headers != null) ...headers,
       });
       for (final e in fields.entries) {
