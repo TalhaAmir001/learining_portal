@@ -42,10 +42,21 @@ class UserModel {
 
   // Get full name
   String get fullName {
-    if (firstName != null && lastName != null) {
-      return '$firstName $lastName';
+    final fn = firstName?.trim();
+    final ln = lastName?.trim();
+    if (fn != null && fn.isNotEmpty && ln != null && ln.isNotEmpty) {
+      return '$fn $ln';
     }
+    if (fn != null && fn.isNotEmpty) return fn;
+    if (ln != null && ln.isNotEmpty) return ln;
     return displayName ?? email.split('@')[0];
+  }
+
+  /// True when [firstName] and/or [lastName] are set (not just login username).
+  bool get hasStructuredName {
+    final fn = firstName?.trim();
+    final ln = lastName?.trim();
+    return (fn != null && fn.isNotEmpty) || (ln != null && ln.isNotEmpty);
   }
 
   /// API id (e.g. parent id for guardian, staff row id for admin/teacher when set in [additionalData]).

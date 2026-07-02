@@ -11,6 +11,7 @@ import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/network/domain/auth_repository.dart';
 import 'package:learining_portal/services/mobile_app_access_service.dart';
+import 'package:learining_portal/services/mobile_device_session_service.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/constants.dart';
 import 'package:learining_portal/utils/web_socket_client.dart';
@@ -26,6 +27,7 @@ class AuthProvider with ChangeNotifier {
   bool _isInitializing = true; // Track initial auth state check
   bool _isAuthenticated = false;
   String? _errorMessage;
+  bool _deviceTransferOtpRequired = false;
   UserModel? _currentUser;
   String? _currentUserId; // Store the document ID for Firestore
 
@@ -117,6 +119,7 @@ class AuthProvider with ChangeNotifier {
         _hydrateLinkedChildrenFromCacheThenRefresh();
       }
       _startMobileAccessMonitoring();
+      unawaited(enforceMobileAppAccess());
     }
   }
 
@@ -538,9 +541,13 @@ class AuthProvider with ChangeNotifier {
     try {
       await _ensureSharedPreferencesInitialized();
       if (_prefs != null) {
+        final preservedDeviceId = _prefs!.getString(prefsKeyMobileDeviceId);
         final keys = _prefs!.getKeys().toList();
         for (final key in keys) {
           await _prefs!.remove(key);
+        }
+        if (preservedDeviceId != null && preservedDeviceId.isNotEmpty) {
+          await _prefs!.setString(prefsKeyMobileDeviceId, preservedDeviceId);
         }
         debugPrint('SharedPreferences cleared on logout');
       }
@@ -552,6 +559,20 @@ class AuthProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _isAuthenticated;
   String? get errorMessage => _errorMessage;
+  bool get deviceTransferOtpRequired => _deviceTransferOtpRequired;
+
+  void _applyLoginFailure(Map<String, dynamic> result) {
+    _errorMessage = result['error']?.toString() ?? 'Authentication failed';
+    final code = result['error_code']?.toString();
+    _deviceTransferOtpRequired = code == loginErrorCodeDeviceInUse ||
+        code == loginErrorCodeDeviceOtpRequired ||
+        code == loginErrorCodeInvalidOtp;
+  }
+
+  void _clearLoginFailureState() {
+    _errorMessage = null;
+    _deviceTransferOtpRequired = false;
+  }
   UserModel? get currentUser => _currentUser;
   String? get currentUserId =>
       _currentUserId; // Expose current user ID (Firestore document ID)
@@ -625,14 +646,15 @@ class AuthProvider with ChangeNotifier {
 
   void _startMobileAccessMonitoring() {
     if (!_isAuthenticated || _currentUser == null) return;
+    if (isSuperAdmin) return;
     if (_mobileAccessActor == null) return;
 
     _mobileAccessCheckTimer?.cancel();
     _mobileAccessCheckTimer = Timer.periodic(
       _mobileAccessCheckInterval,
-      (_) => unawaited(enforceMobileAppAccessIfRevoked()),
+      (_) => unawaited(enforceMobileAppAccess()),
     );
-    unawaited(enforceMobileAppAccessIfRevoked());
+    unawaited(enforceMobileAppAccess());
   }
 
   void _stopMobileAccessMonitoring() {
@@ -640,31 +662,56 @@ class AuthProvider with ChangeNotifier {
     _mobileAccessCheckTimer = null;
   }
 
-  /// While logged in, verify the account has not been revoked on the server.
-  /// Signs out and surfaces [MobileAppAccessService.revokedMessage] when blocked.
-  Future<void> enforceMobileAppAccessIfRevoked() async {
+  Future<void> _persistMobileSessionFromLogin(
+    Map<String, dynamic> result, {
+    Map<String, dynamic>? loginData,
+  }) async {
+    if (isSuperAdmin) return;
+    String? token = result['mobile_session_token']?.toString().trim();
+    if ((token == null || token.isEmpty) && loginData != null) {
+      token = loginData['mobile_session_token']?.toString().trim();
+    }
+    if (token != null && token.isNotEmpty) {
+      await MobileDeviceSessionService.saveSessionToken(token);
+    }
+  }
+
+  /// While logged in, verify the account has not been revoked and still holds
+  /// the active single-device session.
+  Future<void> enforceMobileAppAccess() async {
     if (!_isAuthenticated || _currentUser == null) return;
+    if (isSuperAdmin) return;
     if (_mobileAccessRevocationInProgress) return;
 
     final actor = _mobileAccessActor;
     if (actor == null) return;
 
-    final revoked = await MobileAppAccessService.isAccessRevoked(
+    final status = await MobileAppAccessService.checkAccess(
       actorType: actor.type,
       actorId: actor.id,
     );
-    if (!revoked || !_isAuthenticated) return;
+    if (!_isAuthenticated) return;
+
+    if (status == MobileAppAccessStatus.allowed ||
+        status == MobileAppAccessStatus.checkFailed) {
+      return;
+    }
 
     _mobileAccessRevocationInProgress = true;
     try {
       _stopMobileAccessMonitoring();
       await logout();
-      _errorMessage = MobileAppAccessService.revokedMessage;
+      _errorMessage = status == MobileAppAccessStatus.revoked
+          ? MobileAppAccessService.revokedMessage
+          : MobileAppAccessService.sessionInvalidMessage;
       notifyListeners();
     } finally {
       _mobileAccessRevocationInProgress = false;
     }
   }
+
+  /// @deprecated Use [enforceMobileAppAccess].
+  Future<void> enforceMobileAppAccessIfRevoked() => enforceMobileAppAccess();
 
   // Convert UserType enum to string
   String _userTypeToString(UserType userType) {
@@ -994,10 +1041,14 @@ class AuthProvider with ChangeNotifier {
   Future<bool> login(
     String usernameOrEmail,
     String password,
-    UserType userType,
-  ) async {
+    UserType userType, {
+    String? deviceTransferOtp,
+  }) async {
     _isLoading = true;
     _errorMessage = null;
+    if (deviceTransferOtp == null || deviceTransferOtp.trim().isEmpty) {
+      _deviceTransferOtpRequired = false;
+    }
     notifyListeners();
 
     try {
@@ -1058,7 +1109,12 @@ class AuthProvider with ChangeNotifier {
 
       // Use API authentication for all user types
       if (userType == UserType.teacher || userType == UserType.admin) {
-        return await _loginWithApi(usernameOrEmail.trim(), password, userType);
+        return await _loginWithApi(
+          usernameOrEmail.trim(),
+          password,
+          userType,
+          deviceTransferOtp: deviceTransferOtp,
+        );
       }
 
       // Student keeps the portal `users` flow.
@@ -1067,13 +1123,18 @@ class AuthProvider with ChangeNotifier {
           usernameOrEmail.trim(),
           password,
           userType,
+          deviceTransferOtp: deviceTransferOtp,
         );
       }
 
       // Guardian → mobile-only app_parent_users login. The portal `users`
       // path is no longer used on mobile for parents.
       if (userType == UserType.guardian) {
-        return await _loginAsAppParent(usernameOrEmail.trim(), password);
+        return await _loginAsAppParent(
+          usernameOrEmail.trim(),
+          password,
+          deviceTransferOtp: deviceTransferOtp,
+        );
       }
 
       _errorMessage = 'Invalid user type';
@@ -1092,18 +1153,18 @@ class AuthProvider with ChangeNotifier {
   Future<bool> _loginWithApi(
     String email,
     String password,
-    UserType userType,
-  ) async {
+    UserType userType, {
+    String? deviceTransferOtp,
+  }) async {
     try {
-      // Call the repository to authenticate
       final result = await AuthRepository.loginStaff(
         username: email,
         password: password,
+        deviceTransferOtp: deviceTransferOtp,
       );
 
-      // Check if authentication was successful
       if (!result['success'] || result['data'] == null) {
-        _errorMessage = result['error'] ?? 'Authentication failed';
+        _applyLoginFailure(result);
         _isLoading = false;
         notifyListeners();
         return false;
@@ -1148,8 +1209,9 @@ class AuthProvider with ChangeNotifier {
         // Don't fail login if WebSocket connection fails
       });
 
+      await _persistMobileSessionFromLogin(result);
       _startMobileAccessMonitoring();
-      _errorMessage = null;
+      _clearLoginFailureState();
       _isLoading = false;
       notifyListeners();
       return true;
@@ -1165,18 +1227,18 @@ class AuthProvider with ChangeNotifier {
   Future<bool> _loginWithUserApi(
     String username,
     String password,
-    UserType userType,
-  ) async {
+    UserType userType, {
+    String? deviceTransferOtp,
+  }) async {
     try {
-      // Call the repository to authenticate
       final result = await AuthRepository.loginUser(
         username: username,
         password: password,
+        deviceTransferOtp: deviceTransferOtp,
       );
 
-      // Check if authentication was successful
       if (!result['success'] || result['data'] == null) {
-        _errorMessage = result['error'] ?? 'Authentication failed';
+        _applyLoginFailure(result);
         _isLoading = false;
         notifyListeners();
         return false;
@@ -1242,8 +1304,9 @@ class AuthProvider with ChangeNotifier {
         }));
       }
 
+      await _persistMobileSessionFromLogin(result);
       _startMobileAccessMonitoring();
-      _errorMessage = null;
+      _clearLoginFailureState();
       _isLoading = false;
       notifyListeners();
       return true;
@@ -1259,15 +1322,20 @@ class AuthProvider with ChangeNotifier {
   /// `/mobile_apis/parent_login.php` and persists the resulting `app_parents`
   /// identity. The portal `users` table is intentionally not consulted — this
   /// flow is for parents who only exist in the mobile app.
-  Future<bool> _loginAsAppParent(String identifier, String password) async {
+  Future<bool> _loginAsAppParent(
+    String identifier,
+    String password, {
+    String? deviceTransferOtp,
+  }) async {
     try {
       final result = await AuthRepository.loginAppParent(
         identifier: identifier,
         password: password,
+        deviceTransferOtp: deviceTransferOtp,
       );
 
       if (result['success'] != true || result['data'] == null) {
-        _errorMessage = result['error']?.toString() ?? 'Authentication failed';
+        _applyLoginFailure(result);
         _isLoading = false;
         notifyListeners();
         return false;
@@ -1301,8 +1369,12 @@ class AuthProvider with ChangeNotifier {
         debugPrint('Error refreshing linked children after parent login: $e');
       }));
 
+      await _persistMobileSessionFromLogin(
+        result,
+        loginData: data,
+      );
       _startMobileAccessMonitoring();
-      _errorMessage = null;
+      _clearLoginFailureState();
       _isLoading = false;
       notifyListeners();
       return true;
@@ -1335,6 +1407,16 @@ class AuthProvider with ChangeNotifier {
   Future<void> logout() async {
     try {
       _stopMobileAccessMonitoring();
+
+      final actor = _mobileAccessActor;
+      if (actor != null && !isSuperAdmin) {
+        await MobileAppAccessService.releaseSessionOnLogout(
+          actorType: actor.type,
+          actorId: actor.id,
+        );
+      }
+      await MobileDeviceSessionService.clearSessionToken();
+
       // Stop maintaining WebSocket connection (but don't force disconnect)
       _shouldMaintainConnection = false;
       if (_wsClient != null) {
@@ -1363,7 +1445,7 @@ class AuthProvider with ChangeNotifier {
 
   // Clear error message
   void clearError() {
-    _errorMessage = null;
+    _clearLoginFailureState();
     notifyListeners();
   }
 
@@ -1407,6 +1489,7 @@ class AuthProvider with ChangeNotifier {
             }));
           }
           _startMobileAccessMonitoring();
+          unawaited(enforceMobileAppAccess());
         } else {
           // User data not found in Firestore, clear SharedPreferences
           await _clearUserIdFromSharedPreferences();

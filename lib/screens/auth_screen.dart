@@ -20,6 +20,7 @@ class _AuthScreenState extends State<AuthScreen>
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _transferOtpController = TextEditingController();
   bool _obscurePassword = true;
   UserType? _selectedUserType;
   late AnimationController _animationController;
@@ -51,6 +52,7 @@ class _AuthScreenState extends State<AuthScreen>
     _animationController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _transferOtpController.dispose();
     super.dispose();
   }
 
@@ -59,6 +61,7 @@ class _AuthScreenState extends State<AuthScreen>
       _selectedUserType = userType;
       _emailController.clear();
       _passwordController.clear();
+      _transferOtpController.clear();
       context.read<AuthProvider>().clearError();
     });
     _animationController.forward();
@@ -69,6 +72,7 @@ class _AuthScreenState extends State<AuthScreen>
       _selectedUserType = null;
       _emailController.clear();
       _passwordController.clear();
+      _transferOtpController.clear();
       context.read<AuthProvider>().clearError();
     });
     _animationController.forward();
@@ -82,10 +86,12 @@ class _AuthScreenState extends State<AuthScreen>
     if (_selectedUserType == null) return;
 
     final authProvider = context.read<AuthProvider>();
+    final transferOtp = _transferOtpController.text.trim();
     final success = await authProvider.login(
       _emailController.text.trim(),
       _passwordController.text,
       _selectedUserType!,
+      deviceTransferOtp: transferOtp.isEmpty ? null : transferOtp,
     );
 
     if (success && mounted) {
@@ -366,6 +372,44 @@ class _AuthScreenState extends State<AuthScreen>
             },
           ),
           const SizedBox(height: 16),
+
+          Consumer<AuthProvider>(
+            builder: (context, authProvider, child) {
+              if (!authProvider.deviceTransferOtpRequired) {
+                return const SizedBox.shrink();
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Enter the 6-digit transfer code from the school office to authorize this device. If the account is registered on another phone, that device will be signed out.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey[700],
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  CustomTextField(
+                    controller: _transferOtpController,
+                    label: 'Device transfer code',
+                    icon: Icons.pin_outlined,
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
+                      if (digits.isEmpty) {
+                        return 'Enter the transfer code from the school office';
+                      }
+                      if (digits.length != 6) {
+                        return 'Transfer code must be 6 digits';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              );
+            },
+          ),
 
           // Forgot Password
           // Align(

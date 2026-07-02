@@ -1,10 +1,69 @@
 import 'package:flutter/foundation.dart';
+import 'package:learining_portal/services/mobile_device_session_service.dart';
 import 'package:learining_portal/utils/api_client.dart';
+import 'package:learining_portal/utils/portal_auth_error.dart';
 import 'package:learining_portal/network/data_models/auth/admin_data_model.dart';
 import 'package:learining_portal/network/data_models/auth/user_data_model.dart';
 
 /// Repository for authentication-related API operations
 class AuthRepository {
+  static String? _extractMobileSessionToken(Map<String, dynamic> response) {
+    final raw = response['mobile_session_token'];
+    if (raw == null) return null;
+    final token = raw.toString().trim();
+    return token.isEmpty ? null : token;
+  }
+
+  static Future<Map<String, String>> _mobileDeviceLoginFields() async {
+    return {
+      'device_id': await MobileDeviceSessionService.getOrCreateDeviceId(),
+      'device_label': MobileDeviceSessionService.getDeviceLabel(),
+    };
+  }
+
+  static String _loginErrorMessage({
+    required Map<String, dynamic> response,
+    String? parsedModelError,
+  }) {
+    final fromResponse = parsePortalAuthErrorMessage(response['error']);
+    if (fromResponse != null && fromResponse.isNotEmpty) {
+      return fromResponse;
+    }
+
+    final fromModel = parsePortalAuthErrorMessage(parsedModelError);
+    if (fromModel != null && fromModel.isNotEmpty) {
+      return fromModel;
+    }
+
+    return 'Authentication failed';
+  }
+
+  static String? _extractLoginErrorCode(Map<String, dynamic> response) {
+    final code = response['error_code']?.toString().trim();
+    if (code != null && code.isNotEmpty) return code;
+    return null;
+  }
+
+  static Map<String, dynamic> _loginFailure({
+    required Map<String, dynamic> response,
+    String? parsedModelError,
+  }) {
+    return {
+      'success': false,
+      'error': _loginErrorMessage(
+        response: response,
+        parsedModelError: parsedModelError,
+      ),
+      'error_code': _extractLoginErrorCode(response),
+    };
+  }
+
+  static Map<String, String> _optionalDeviceTransferOtp(String? deviceTransferOtp) {
+    final otp = deviceTransferOtp?.trim() ?? '';
+    if (otp.isEmpty) return {};
+    return {'device_transfer_otp': otp};
+  }
+
   /// Login for Admin/Teacher users
   ///
   /// [username] - The username or email
@@ -17,9 +76,12 @@ class AuthRepository {
   static Future<Map<String, dynamic>> loginStaff({
     required String username,
     required String password,
+    String? deviceTransferOtp,
   }) async {
     try {
       debugPrint('AuthRepository: Logging in staff - username: $username');
+
+      final deviceFields = await _mobileDeviceLoginFields();
 
       // Call the API authentication endpoint
       final response = await ApiClient.post(
@@ -27,7 +89,8 @@ class AuthRepository {
         body: {
           'username': username,
           'password': password,
-          // captcha is omitted if not needed (null values are filtered out)
+          ...deviceFields,
+          ..._optionalDeviceTransferOtp(deviceTransferOtp),
         },
       );
 
@@ -39,35 +102,17 @@ class AuthRepository {
 
       // Check if authentication was successful
       if (!adminData.isSuccess || adminData.result == null) {
-        // Handle error response
-        String errorMsg = 'Authentication failed';
-        if (adminData.error != null && adminData.error!.isNotEmpty) {
-          errorMsg = adminData.error!;
-        } else if (response['error'] != null) {
-          final errorObj = response['error'] as Map<String, dynamic>?;
-          if (errorObj != null) {
-            final errors = <String>[];
-            if (errorObj['username'] != null &&
-                errorObj['username'].toString().isNotEmpty) {
-              errors.add('Username: ${errorObj['username']}');
-            }
-            if (errorObj['password'] != null &&
-                errorObj['password'].toString().isNotEmpty) {
-              errors.add('Password: ${errorObj['password']}');
-            }
-            if (errorObj['captcha'] != null &&
-                errorObj['captcha'].toString().isNotEmpty) {
-              errors.add('Captcha: ${errorObj['captcha']}');
-            }
-            if (errors.isNotEmpty) {
-              errorMsg = errors.join(', ');
-            }
-          }
-        }
-        return {'success': false, 'error': errorMsg};
+        return _loginFailure(
+          response: response,
+          parsedModelError: adminData.error,
+        );
       }
 
-      return {'success': true, 'data': adminData};
+      return {
+        'success': true,
+        'data': adminData,
+        'mobile_session_token': _extractMobileSessionToken(response),
+      };
     } on ApiException catch (e) {
       debugPrint('AuthRepository: ApiException for staff login: ${e.message}');
       return {'success': false, 'error': e.message};
@@ -92,9 +137,12 @@ class AuthRepository {
   static Future<Map<String, dynamic>> loginUser({
     required String username,
     required String password,
+    String? deviceTransferOtp,
   }) async {
     try {
       debugPrint('AuthRepository: Logging in user - username: $username');
+
+      final deviceFields = await _mobileDeviceLoginFields();
 
       // Call the API authentication endpoint
       final response = await ApiClient.post(
@@ -102,7 +150,8 @@ class AuthRepository {
         body: {
           'username': username,
           'password': password,
-          // captcha is omitted if not needed (null values are filtered out)
+          ...deviceFields,
+          ..._optionalDeviceTransferOtp(deviceTransferOtp),
         },
       );
 
@@ -115,35 +164,17 @@ class AuthRepository {
 
       // Check if authentication was successful
       if (!userData.isSuccess || userData.firstResult == null) {
-        // Handle error response
-        String errorMsg = 'Authentication failed';
-        if (userData.error != null && userData.error!.isNotEmpty) {
-          errorMsg = userData.error!;
-        } else if (response['error'] != null) {
-          final errorObj = response['error'] as Map<String, dynamic>?;
-          if (errorObj != null) {
-            final errors = <String>[];
-            if (errorObj['username'] != null &&
-                errorObj['username'].toString().isNotEmpty) {
-              errors.add('Username: ${errorObj['username']}');
-            }
-            if (errorObj['password'] != null &&
-                errorObj['password'].toString().isNotEmpty) {
-              errors.add('Password: ${errorObj['password']}');
-            }
-            if (errorObj['captcha'] != null &&
-                errorObj['captcha'].toString().isNotEmpty) {
-              errors.add('Captcha: ${errorObj['captcha']}');
-            }
-            if (errors.isNotEmpty) {
-              errorMsg = errors.join(', ');
-            }
-          }
-        }
-        return {'success': false, 'error': errorMsg};
+        return _loginFailure(
+          response: response,
+          parsedModelError: userData.error,
+        );
       }
 
-      return {'success': true, 'data': userData};
+      return {
+        'success': true,
+        'data': userData,
+        'mobile_session_token': _extractMobileSessionToken(response),
+      };
     } on ApiException catch (e) {
       debugPrint('AuthRepository: ApiException for user login: ${e.message}');
       return {'success': false, 'error': e.message};
@@ -169,17 +200,22 @@ class AuthRepository {
   static Future<Map<String, dynamic>> loginAppParent({
     required String identifier,
     required String password,
+    String? deviceTransferOtp,
   }) async {
     try {
       debugPrint(
         'AuthRepository: Logging in app parent - identifier: $identifier',
       );
 
+      final deviceFields = await _mobileDeviceLoginFields();
+
       final response = await ApiClient.postJson(
         endpoint: '/mobile_apis/parent_login.php',
         body: {
           'identifier': identifier,
           'password': password,
+          ...deviceFields,
+          ..._optionalDeviceTransferOtp(deviceTransferOtp),
         },
       );
 
@@ -192,6 +228,7 @@ class AuthRepository {
           'error': (err == null || err.isEmpty)
               ? 'Invalid username or password.'
               : err,
+          'error_code': _extractLoginErrorCode(response),
         };
       }
 
@@ -202,7 +239,12 @@ class AuthRepository {
           'error': 'Unexpected login response shape.',
         };
       }
-      return {'success': true, 'data': raw};
+      return {
+        'success': true,
+        'data': raw,
+        'mobile_session_token': _extractMobileSessionToken(raw) ??
+            _extractMobileSessionToken(response),
+      };
     } on ApiException catch (e) {
       debugPrint('AuthRepository: ApiException for parent login: ${e.message}');
       return {'success': false, 'error': e.message};

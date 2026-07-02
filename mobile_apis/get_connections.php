@@ -111,11 +111,7 @@ function getParentDisplayNameByUserId($mysqli, $parent_id) {
     $res = $mysqli->query("SELECT username FROM users WHERE id = '$id' LIMIT 1");
     if (!$res || !($row = $res->fetch_assoc())) return null;
     $username = trim((string)($row['username'] ?? ''));
-    if ($username !== '') return $username;
-    $fn = trim((string)($row['firstname'] ?? ''));
-    $ln = trim((string)($row['lastname'] ?? ''));
-    if ($fn !== '' || $ln !== '') return trim("$fn $ln");
-    return null;
+    return $username !== '' ? $username : null;
 }
 
 /**
@@ -151,6 +147,122 @@ function getDisplayNameForUser($mysqli, $user_id, $user_type) {
         return trim($row['username']);
     }
     return null;
+}
+
+/**
+ * Batch-load display names for inbox rows (avoids N+1 queries per connection).
+ * Returns map keyed by "userId|userType" => display name.
+ */
+function batchGetDisplayNames($mysqli, array $users) {
+    $result = [];
+    if (!$mysqli || empty($users)) {
+        return $result;
+    }
+
+    $staffIds = [];
+    $studentIds = [];
+    $parentIds = [];
+    $unknownIds = [];
+
+    foreach ($users as $u) {
+        $id = (string)($u['id'] ?? '');
+        if ($id === '') continue;
+        $type = strtolower(trim((string)($u['type'] ?? '')));
+        $key = "$id|$type";
+
+        if (in_array($type, ['staff', 'admin', 'teacher'], true)) {
+            $staffIds[$id] = $key;
+        } elseif (in_array($type, ['guardian', 'parent'], true)) {
+            $parentIds[$id] = $key;
+        } elseif ($type === '') {
+            $unknownIds[$id] = $key;
+        } else {
+            $studentIds[$id] = $key;
+        }
+    }
+
+    if (!empty($staffIds)) {
+        $ids = implode(',', array_map('intval', array_keys($staffIds)));
+        $res = $mysqli->query("SELECT id, name FROM staff WHERE id IN ($ids)");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $id = (string)$row['id'];
+                if (!isset($staffIds[$id])) continue;
+                $name = trim((string)($row['name'] ?? ''));
+                if ($name !== '') {
+                    $result[$staffIds[$id]] = $name;
+                }
+            }
+        }
+    }
+
+    if (!empty($parentIds)) {
+        $ids = implode(',', array_map('intval', array_keys($parentIds)));
+        $res = $mysqli->query("SELECT id, username FROM users WHERE id IN ($ids)");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $id = (string)$row['id'];
+                if (!isset($parentIds[$id])) continue;
+                $username = trim((string)($row['username'] ?? ''));
+                if ($username !== '') {
+                    $result[$parentIds[$id]] = $username;
+                }
+            }
+        }
+    }
+
+    if (!empty($studentIds)) {
+        $ids = implode(',', array_map('intval', array_keys($studentIds)));
+        $res = $mysqli->query("SELECT id, firstname, lastname FROM students WHERE id IN ($ids)");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $id = (string)$row['id'];
+                if (!isset($studentIds[$id])) continue;
+                $fn = trim((string)($row['firstname'] ?? ''));
+                $ln = trim((string)($row['lastname'] ?? ''));
+                if ($fn !== '' || $ln !== '') {
+                    $result[$studentIds[$id]] = trim("$fn $ln");
+                }
+            }
+        }
+        $missingStudentIds = [];
+        foreach ($studentIds as $id => $key) {
+            if (!isset($result[$key])) {
+                $missingStudentIds[$id] = $key;
+            }
+        }
+        if (!empty($missingStudentIds)) {
+            $ids = implode(',', array_map('intval', array_keys($missingStudentIds)));
+            $res = $mysqli->query("SELECT user_id, username FROM users WHERE user_id IN ($ids)");
+            if ($res) {
+                while ($row = $res->fetch_assoc()) {
+                    $id = (string)$row['user_id'];
+                    if (!isset($missingStudentIds[$id])) continue;
+                    $username = trim((string)($row['username'] ?? ''));
+                    if ($username !== '') {
+                        $result[$missingStudentIds[$id]] = $username;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!empty($unknownIds)) {
+        $ids = implode(',', array_map('intval', array_keys($unknownIds)));
+        $res = $mysqli->query("SELECT id, username FROM users WHERE id IN ($ids)");
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $id = (string)$row['id'];
+                if (!isset($unknownIds[$id])) continue;
+                $username = trim((string)($row['username'] ?? ''));
+                if ($username !== '') {
+                    $result[$unknownIds[$id]] = $username;
+                }
+            }
+        }
+    }
+
+    return $result;
 }
 
 /** Column name in fl_chat_users for this user_type: staff_id (admin/Support), student_id, teacher_id, parent_id. */
@@ -254,9 +366,36 @@ function getUserConnections($chat_user_id)
     
     $result = $mysqli->query($sql);
     $connections = [];
+    $rows = [];
+    $usersForNames = [];
 
     if ($result) {
         while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+
+            $other_user_id = null;
+            $other_user_type = null;
+            if ($row['chat_user_one'] == $chat_user_id) {
+                $other_user_id = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
+                $other_user_type = $row['user_two_type'];
+            } else {
+                $other_user_id = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
+                $other_user_type = $row['user_one_type'];
+            }
+            if ($other_user_id !== null) {
+                $other_user_id = (string) $other_user_id;
+                $typeKey = strtolower(trim((string)($other_user_type ?? '')));
+                $usersForNames["$other_user_id|$typeKey"] = [
+                    'id' => $other_user_id,
+                    'type' => $other_user_type,
+                ];
+            }
+        }
+    }
+
+    $nameMap = batchGetDisplayNames($mysqli, array_values($usersForNames));
+
+    foreach ($rows as $row) {
             // Determine the other user's ID
             $other_chat_user_id = ($row['chat_user_one'] == $chat_user_id) 
                 ? $row['chat_user_two'] 
@@ -275,7 +414,10 @@ function getUserConnections($chat_user_id)
             if ($other_user_id !== null) {
                 $other_user_id = (string) $other_user_id;
             }
-            $other_user_name = getDisplayNameForUser($mysqli, $other_user_id, $other_user_type);
+            $nameKey = $other_user_id !== null
+                ? $other_user_id . '|' . strtolower(trim((string)($other_user_type ?? '')))
+                : '';
+            $other_user_name = $nameKey !== '' ? ($nameMap[$nameKey] ?? null) : null;
 
             // Determine sender of last message
             // In fl_chat_messages, chat_user_id is the receiver
@@ -311,12 +453,7 @@ function getUserConnections($chat_user_id)
 
             $u1 = $row['user_one_staff_id'] ?? $row['user_one_student_id'] ?? $row['user_one_teacher_id'] ?? $row['user_one_parent_id'];
             $u2 = $row['user_two_staff_id'] ?? $row['user_two_student_id'] ?? $row['user_two_teacher_id'] ?? $row['user_two_parent_id'];
-            $conn_id = $mysqli->real_escape_string($row['id']);
-            $unread_res = $mysqli->query("SELECT COUNT(*) AS cnt FROM fl_chat_messages WHERE chat_connection_id = '$conn_id' AND chat_user_id = '$chat_user_id' AND (is_read = 0 OR is_read IS NULL)");
-            $unread_count = 0;
-            if ($unread_res && $ur = $unread_res->fetch_assoc()) {
-                $unread_count = (int) $ur['cnt'];
-            }
+            $unread_count = (int)($row['unread_count'] ?? 0);
             $connections[] = [
                 'id' => $row['id'],
                 'chat_user_one' => $row['chat_user_one'],
@@ -333,7 +470,6 @@ function getUserConnections($chat_user_id)
                 'last_message' => $last_message,
                 'support_claimed_by_staff_id' => isset($row['support_claimed_by_staff_id']) ? $row['support_claimed_by_staff_id'] : null
             ];
-        }
     }
 
     $mysqli->close();

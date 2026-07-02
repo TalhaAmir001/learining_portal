@@ -301,6 +301,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       // Ensure WebSocket is connected if user is already authenticated (app restart)
       if (authProvider.isAuthenticated) {
+        inboxProvider.setAuthProvider(authProvider);
         debugPrint(
           'Main: User is authenticated, ensuring WebSocket connection',
         );
@@ -349,7 +350,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             debugPrint('Main: Error refreshing FCM token: $error');
           },
         );
-        authProvider.enforceMobileAppAccessIfRevoked().catchError((error) {
+        authProvider.enforceMobileAppAccess().catchError((error) {
           debugPrint('Main: Error checking mobile app access: $error');
         });
       }

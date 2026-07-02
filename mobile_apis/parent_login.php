@@ -147,7 +147,53 @@ try {
     $mysqli->query("UPDATE app_parent_users SET updated_at = NOW() WHERE id = $uid LIMIT 1");
 
     $app_hdr = isset($_SERVER['HTTP_X_LEARNING_PORTAL_APP']) ? trim((string) $_SERVER['HTTP_X_LEARNING_PORTAL_APP']) : '';
-    if ($app_hdr !== '' && $app_hdr !== '0' && strtolower($app_hdr) !== 'false' && $uid > 0) {
+    $is_mobile_app = ($app_hdr !== '' && $app_hdr !== '0' && strtolower($app_hdr) !== 'false');
+
+    $mobile_session_token = null;
+    if ($is_mobile_app) {
+        $device_id    = isset($body['device_id']) ? (string) $body['device_id'] : '';
+        $device_label = isset($body['device_label']) ? (string) $body['device_label'] : '';
+        $transfer_otp = isset($body['device_transfer_otp']) ? (string) $body['device_transfer_otp'] : '';
+        if (pl_normalise_mobile_device_id($device_id) === '') {
+            $mysqli->close();
+            pl_json_out([
+                'success' => false,
+                'error'   => 'Device identification is required for mobile app login.',
+            ]);
+        }
+        $claim = pl_claim_mobile_app_session($mysqli, 'app_parent_user', $uid, $device_id, $device_label, $transfer_otp);
+        if (!$claim['ok']) {
+            $mysqli->close();
+            if (isset($claim['reason']) && $claim['reason'] === 'device_otp_required') {
+                pl_json_out([
+                    'success'    => false,
+                    'error'      => 'This account has no registered mobile device yet. Enter a transfer code from the school office to authorize this device.',
+                    'error_code' => 'device_otp_required',
+                ]);
+            }
+            if (isset($claim['reason']) && $claim['reason'] === 'device_in_use') {
+                pl_json_out([
+                    'success'    => false,
+                    'error'      => 'This account is already active on another device. Enter a transfer code from the school office to sign in on this device. The other device will be signed out.',
+                    'error_code' => 'device_in_use',
+                ]);
+            }
+            if (isset($claim['reason']) && $claim['reason'] === 'invalid_otp') {
+                pl_json_out([
+                    'success'    => false,
+                    'error'      => 'The transfer code is invalid or has already been used. Please request a new code from the school office.',
+                    'error_code' => 'invalid_otp',
+                ]);
+            }
+            pl_json_out([
+                'success' => false,
+                'error'   => 'Unable to start a mobile app session. Please try again.',
+            ]);
+        }
+        $mobile_session_token = (string) ($claim['session_token'] ?? '');
+    }
+
+    if ($is_mobile_app && $uid > 0) {
         $tbl = $mysqli->query("SHOW TABLES LIKE 'mobile_app_login_log'");
         if ($tbl && $tbl->num_rows > 0) {
             $tbl->free();
@@ -160,9 +206,13 @@ try {
     }
 
     $mysqli->close();
+    $profile = pl_app_parent_profile_payload($parent_row, $user_row);
+    if ($mobile_session_token !== null && $mobile_session_token !== '') {
+        $profile['mobile_session_token'] = $mobile_session_token;
+    }
     pl_json_out([
         'success' => true,
-        'result'  => pl_app_parent_profile_payload($parent_row, $user_row),
+        'result'  => $profile,
     ]);
 } catch (Exception $e) {
     if ($mysqli) {

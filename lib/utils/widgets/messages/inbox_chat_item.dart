@@ -66,11 +66,17 @@ class ChatListItem extends StatelessWidget {
 
     return InkWell(
       onTap: () async {
+        final inboxProvider = context.read<InboxProvider>();
+        final cached = inboxProvider.cachedUserProfile(otherUser.uid);
+        final userForChat =
+            (cached != null && cached.hasStructuredName) ? cached : otherUser;
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) =>
-                ChatScreenWrapper(otherUser: otherUser, chatId: chat.chatId),
+            builder: (context) => ChatScreenWrapper(
+              otherUser: userForChat,
+              chatId: chat.chatId,
+            ),
           ),
         );
         if (context.mounted) {

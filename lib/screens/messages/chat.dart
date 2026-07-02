@@ -7,6 +7,7 @@ import 'package:learining_portal/models/user_model.dart';
 import 'package:learining_portal/network/domain/messages_chat_repository.dart';
 import 'package:learining_portal/providers/auth_provider.dart' show AuthProvider, UserType;
 import 'package:learining_portal/providers/messages/chat_provider.dart';
+import 'package:learining_portal/providers/messages/inbox_provider.dart';
 import 'package:learining_portal/services/notification_service.dart';
 import 'package:learining_portal/utils/app_colors.dart';
 import 'package:learining_portal/utils/constants.dart';
@@ -50,6 +51,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _hasScrolledToBottomOnLoad = false;
   int _previousMessageCount = 0;
   AuthProvider? _authForWsReconnect;
+  UserModel? _resolvedOtherUser;
 
   @override
   void didChangeDependencies() {
@@ -77,9 +79,44 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _resolvedOtherUser = widget.otherUser;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _resolveOtherUserProfile();
       _initializeChat();
     });
+  }
+
+  void _resolveOtherUserProfile() {
+    final otherUser = widget.otherUser;
+    if (otherUser == null) return;
+
+    final inboxProvider = Provider.of<InboxProvider>(context, listen: false);
+    final cached = inboxProvider.cachedUserProfile(otherUser.uid);
+    if (cached != null && cached.hasStructuredName) {
+      if (_resolvedOtherUser?.hasStructuredName != true) {
+        setState(() => _resolvedOtherUser = cached);
+      }
+      return;
+    }
+
+    if (otherUser.hasStructuredName) return;
+
+    firestore.collection('user').doc(otherUser.uid).get().then((doc) {
+      if (!mounted || !doc.exists) return;
+      final user = UserModel.fromFirestore(doc);
+      if (user.hasStructuredName) {
+        setState(() => _resolvedOtherUser = user);
+      }
+    }).catchError((_) {});
+  }
+
+  UserModel? _displayOtherUser(InboxProvider inboxProvider) {
+    final base = widget.otherUser;
+    if (base == null) return null;
+    final cached = inboxProvider.cachedUserProfile(base.uid);
+    if (cached != null && cached.hasStructuredName) return cached;
+    if (_resolvedOtherUser?.hasStructuredName == true) return _resolvedOtherUser;
+    return _resolvedOtherUser ?? base;
   }
 
   void _initializeChat() {
@@ -244,12 +281,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final otherUser = widget.otherUser;
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final showTicketBar = authProvider.userType != UserType.teacher &&
         authProvider.userType != UserType.admin;
 
-    if (otherUser == null && widget.chatId == null) {
+    if (widget.otherUser == null && widget.chatId == null) {
       return Scaffold(
         body: Container(
           decoration: const BoxDecoration(
@@ -316,71 +352,84 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ),
-                  if (otherUser != null) ...[
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: Colors.white.withOpacity(0.3),
-                      backgroundImage:
-                          otherUser.photoUrl != null &&
-                              otherUser.photoUrl!.isNotEmpty
-                          ? NetworkImage(otherUser.photoUrl!)
-                          : null,
-                      child:
-                          otherUser.photoUrl == null ||
-                              otherUser.photoUrl!.isEmpty
-                          ? const Icon(
-                              Icons.person_rounded,
+                  Consumer<InboxProvider>(
+                    builder: (context, inboxProvider, _) {
+                      final otherUser = _displayOtherUser(inboxProvider);
+                      if (otherUser == null) {
+                        return Expanded(
+                          child: Text(
+                            'Chat',
+                            style: theme.textTheme.titleMedium?.copyWith(
                               color: Colors.white,
-                              size: 22,
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        otherUser.fullName,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, color: Colors.white),
-                      color: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      onSelected: (value) {
-                        if (value == 'report')
-                          _showReportDialog(context, otherUser);
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'report',
-                          child: Row(
-                            children: [
-                              Icon(Icons.flag_outlined, size: 20),
-                              SizedBox(width: 12),
-                              Text('Report user'),
-                            ],
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
+                        );
+                      }
+                      return Expanded(
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              backgroundImage:
+                                  otherUser.photoUrl != null &&
+                                      otherUser.photoUrl!.isNotEmpty
+                                  ? NetworkImage(otherUser.photoUrl!)
+                                  : null,
+                              child:
+                                  otherUser.photoUrl == null ||
+                                      otherUser.photoUrl!.isEmpty
+                                  ? const Icon(
+                                      Icons.person_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                otherUser.fullName,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            PopupMenuButton<String>(
+                              icon: const Icon(
+                                Icons.more_vert,
+                                color: Colors.white,
+                              ),
+                              color: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              onSelected: (value) {
+                                if (value == 'report') {
+                                  _showReportDialog(context, otherUser);
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: 'report',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.flag_outlined, size: 20),
+                                      SizedBox(width: 12),
+                                      Text('Report user'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ] else ...[
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Chat',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -389,7 +438,9 @@ class _ChatScreenState extends State<ChatScreen> {
             //   • Staff side    → shows the other parent's active child when
             //     the counterparty is a guardian (e.g. claimed Support thread).
             // Hidden (SizedBox.shrink) in every other case.
-            ActiveChildFloatingBar(otherUser: otherUser),
+            ActiveChildFloatingBar(
+              otherUser: _resolvedOtherUser ?? widget.otherUser,
+            ),
             // Messages List
             Expanded(
               child: Consumer<ChatProvider>(

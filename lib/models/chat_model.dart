@@ -47,7 +47,7 @@ class ChatModel {
   /// Best display name for the other user: from UserModel or API fallback (for parents).
   String getOtherUserDisplayName(String currentUserId) {
     final other = getOtherUser(currentUserId);
-    if (other != null && other.fullName.isNotEmpty) return other.fullName;
+    if (other != null && other.hasStructuredName) return other.fullName;
     if (otherUserDisplayName != null && otherUserDisplayName!.isNotEmpty) {
       return otherUserDisplayName!;
     }

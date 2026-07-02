@@ -127,6 +127,570 @@ function pl_is_mobile_app_access_revoked($mysqli, $actor_type, $actor_id) {
     return $revoked;
 }
 
+/** Idle days after which an orphaned mobile session may be replaced by a new device. */
+if (!defined('PL_MOBILE_SESSION_IDLE_DAYS')) {
+    define('PL_MOBILE_SESSION_IDLE_DAYS', 30);
+}
+
+/** Valid mobile-app actor types for session tracking. */
+function pl_mobile_app_actor_types() {
+    return array('staff', 'portal_user', 'app_parent_user');
+}
+
+function pl_normalise_mobile_app_actor_type($actor_type) {
+    $actor_type = preg_replace('/[^a-z_]/', '', strtolower((string) $actor_type));
+    return in_array($actor_type, pl_mobile_app_actor_types(), true) ? $actor_type : '';
+}
+
+function pl_normalise_mobile_device_id($device_id) {
+    $device_id = trim((string) $device_id);
+    if ($device_id === '' || strlen($device_id) > 64) {
+        return '';
+    }
+    if (!preg_match('/^[A-Za-z0-9\-_]+$/', $device_id)) {
+        return '';
+    }
+    return $device_id;
+}
+
+function pl_normalise_mobile_session_token($session_token) {
+    $session_token = trim((string) $session_token);
+    if ($session_token === '' || strlen($session_token) > 64) {
+        return '';
+    }
+    if (!preg_match('/^[A-Za-z0-9]+$/', $session_token)) {
+        return '';
+    }
+    return $session_token;
+}
+
+function pl_generate_mobile_session_token() {
+    return bin2hex(random_bytes(32));
+}
+
+function pl_mobile_app_session_table_exists($mysqli) {
+    $tbl = $mysqli->query("SHOW TABLES LIKE 'mobile_app_active_session'");
+    $exists = ($tbl && $tbl->num_rows > 0);
+    if ($tbl) {
+        $tbl->free();
+    }
+    return $exists;
+}
+
+/**
+ * True when last_seen_at is older than PL_MOBILE_SESSION_IDLE_DAYS.
+ *
+ * @param string|null $last_seen_at
+ */
+function pl_mobile_app_session_is_stale($last_seen_at) {
+    if ($last_seen_at === null || $last_seen_at === '') {
+        return true;
+    }
+    $ts = strtotime((string) $last_seen_at);
+    if ($ts === false) {
+        return true;
+    }
+    $idle_seconds = (int) PL_MOBILE_SESSION_IDLE_DAYS * 86400;
+    return (time() - $ts) > $idle_seconds;
+}
+
+/**
+ * Whether login must present a valid device-transfer OTP.
+ *
+ * @param array<string,mixed>|null $existing Session row or null
+ * @return string Empty when OTP not required; else device_otp_required|device_in_use
+ */
+function pl_mobile_app_login_requires_otp($existing, $device_id) {
+    if ($existing === null) {
+        return 'device_otp_required';
+    }
+    $existing_device = (string) ($existing['device_id'] ?? '');
+    if ($existing_device === '') {
+        return 'device_otp_required';
+    }
+    if ($existing_device !== $device_id) {
+        return 'device_in_use';
+    }
+    return '';
+}
+
+/**
+ * Staff OTP gate uses registered device saved on mobile_app_staff_device_otp.
+ *
+ * @return string Empty when OTP not required; else device_otp_required|device_in_use
+ */
+function pl_staff_mobile_app_login_requires_otp($mysqli, $staff_id, $device_id) {
+    if (!pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+        return 'device_otp_required';
+    }
+
+    $staff_id  = (int) $staff_id;
+    $device_id = pl_normalise_mobile_device_id($device_id);
+    if ($staff_id < 1 || $device_id === '') {
+        return 'device_otp_required';
+    }
+
+    $res = $mysqli->query(
+        "SELECT registered_device_id
+         FROM mobile_app_staff_device_otp
+         WHERE staff_id=$staff_id
+         LIMIT 1"
+    );
+    if (!$res || $res->num_rows === 0) {
+        if ($res) {
+            $res->free();
+        }
+        return 'device_otp_required';
+    }
+    $row = $res->fetch_assoc();
+    $res->free();
+
+    $registered = pl_normalise_mobile_device_id((string) ($row['registered_device_id'] ?? ''));
+    if ($registered === '') {
+        return 'device_otp_required';
+    }
+    if ($registered !== $device_id) {
+        return 'device_in_use';
+    }
+    return '';
+}
+
+/**
+ * Persist the staff member's authorized mobile device after a successful login.
+ */
+function pl_save_staff_registered_device($mysqli, $staff_id, $device_id, $device_label = '') {
+    if (!pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+        return false;
+    }
+
+    $staff_id  = (int) $staff_id;
+    $device_id = pl_normalise_mobile_device_id($device_id);
+    if ($staff_id < 1 || $device_id === '') {
+        return false;
+    }
+
+    $device_esc = $mysqli->real_escape_string($device_id);
+    $label      = trim((string) $device_label);
+    if (strlen($label) > 255) {
+        $label = substr($label, 0, 255);
+    }
+    $label_sql = ($label !== '') ? "'" . $mysqli->real_escape_string($label) . "'" : 'NULL';
+    $now       = date('Y-m-d H:i:s');
+
+    return (bool) $mysqli->query(
+        "UPDATE mobile_app_staff_device_otp
+         SET registered_device_id='$device_esc',
+             registered_device_label=$label_sql,
+             device_last_seen_at='$now',
+             updated_at='$now'
+         WHERE staff_id=$staff_id
+         LIMIT 1"
+    );
+}
+
+/**
+ * Clear saved staff device info (e.g. admin release device).
+ */
+function pl_clear_staff_registered_device($mysqli, $staff_id) {
+    if (!pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+        return false;
+    }
+
+    $staff_id = (int) $staff_id;
+    if ($staff_id < 1) {
+        return false;
+    }
+
+    $now = date('Y-m-d H:i:s');
+    return (bool) $mysqli->query(
+        "UPDATE mobile_app_staff_device_otp
+         SET registered_device_id=NULL,
+             registered_device_label=NULL,
+             device_last_seen_at=NULL,
+             updated_at='$now'
+         WHERE staff_id=$staff_id
+         LIMIT 1"
+    );
+}
+
+/**
+ * Claim the single mobile session slot for an actor at login time.
+ *
+ * A valid [device_transfer_otp] from the web admin is required when this account
+ * has no registered device yet, or when the current device does not match the
+ * registered one. The code is single-use and replaces any existing session.
+ *
+ * @return array{ok:bool,reason?:string,session_token?:string}
+ */
+function pl_claim_mobile_app_session($mysqli, $actor_type, $actor_id, $device_id, $device_label = '', $device_transfer_otp = '') {
+    if (!pl_mobile_app_session_table_exists($mysqli)) {
+        return array('ok' => true, 'session_token' => pl_generate_mobile_session_token());
+    }
+
+    $actor_type = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id   = (int) $actor_id;
+    $device_id  = pl_normalise_mobile_device_id($device_id);
+    if ($actor_type === '' || $actor_id < 1 || $device_id === '') {
+        return array('ok' => false, 'reason' => 'invalid_input');
+    }
+
+    $type_esc = $mysqli->real_escape_string($actor_type);
+    if ($actor_type === 'staff' && pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+        $otp_reason = pl_staff_mobile_app_login_requires_otp($mysqli, $actor_id, $device_id);
+    } else {
+        $res = $mysqli->query(
+            "SELECT device_id, session_token, last_seen_at
+             FROM mobile_app_active_session
+             WHERE actor_type='$type_esc' AND actor_id=$actor_id
+             LIMIT 1"
+        );
+        $existing = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+        if ($res) {
+            $res->free();
+        }
+        $otp_reason = pl_mobile_app_login_requires_otp($existing, $device_id);
+    }
+
+    if ($otp_reason !== '') {
+        $otp = pl_normalise_device_transfer_otp($device_transfer_otp);
+        if ($otp === '') {
+            return array('ok' => false, 'reason' => $otp_reason);
+        }
+        if (!pl_consume_device_transfer_otp($mysqli, $actor_type, $actor_id, $otp)) {
+            return array('ok' => false, 'reason' => 'invalid_otp');
+        }
+    }
+
+    $token      = pl_generate_mobile_session_token();
+    $token_esc  = $mysqli->real_escape_string($token);
+    $device_esc = $mysqli->real_escape_string($device_id);
+    $label      = trim((string) $device_label);
+    if (strlen($label) > 255) {
+        $label = substr($label, 0, 255);
+    }
+    $label_sql = ($label !== '') ? "'" . $mysqli->real_escape_string($label) . "'" : 'NULL';
+    $now       = date('Y-m-d H:i:s');
+
+    $sql = "INSERT INTO mobile_app_active_session
+            (actor_type, actor_id, device_id, session_token, device_label, created_at, last_seen_at)
+            VALUES ('$type_esc', $actor_id, '$device_esc', '$token_esc', $label_sql, '$now', '$now')
+            ON DUPLICATE KEY UPDATE
+              device_id = VALUES(device_id),
+              session_token = VALUES(session_token),
+              device_label = VALUES(device_label),
+              last_seen_at = VALUES(last_seen_at)";
+    if (!$mysqli->query($sql)) {
+        return array('ok' => false, 'reason' => 'db_error');
+    }
+
+    if ($actor_type === 'staff') {
+        pl_save_staff_registered_device($mysqli, $actor_id, $device_id, $device_label);
+    }
+
+    return array('ok' => true, 'session_token' => $token);
+}
+
+/**
+ * Validate that the caller holds the active mobile session.
+ */
+function pl_validate_mobile_app_session($mysqli, $actor_type, $actor_id, $device_id, $session_token) {
+    if (!pl_mobile_app_session_table_exists($mysqli)) {
+        return true;
+    }
+
+    $actor_type     = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id       = (int) $actor_id;
+    $device_id      = pl_normalise_mobile_device_id($device_id);
+    $session_token  = pl_normalise_mobile_session_token($session_token);
+    if ($actor_type === '' || $actor_id < 1 || $device_id === '' || $session_token === '') {
+        return false;
+    }
+
+    $type_esc  = $mysqli->real_escape_string($actor_type);
+    $res       = $mysqli->query(
+        "SELECT device_id, session_token, last_seen_at
+         FROM mobile_app_active_session
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id
+         LIMIT 1"
+    );
+    if (!$res || $res->num_rows === 0) {
+        if ($res) {
+            $res->free();
+        }
+        return false;
+    }
+    $row = $res->fetch_assoc();
+    $res->free();
+
+    if (pl_mobile_app_session_is_stale($row['last_seen_at'] ?? null)) {
+        return false;
+    }
+
+    return ((string) ($row['device_id'] ?? '') === $device_id)
+        && ((string) ($row['session_token'] ?? '') === $session_token);
+}
+
+/**
+ * Release the mobile session on logout (only when token matches).
+ */
+function pl_release_mobile_app_session($mysqli, $actor_type, $actor_id, $device_id, $session_token) {
+    if (!pl_mobile_app_session_table_exists($mysqli)) {
+        return true;
+    }
+
+    $actor_type    = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id      = (int) $actor_id;
+    $device_id     = pl_normalise_mobile_device_id($device_id);
+    $session_token = pl_normalise_mobile_session_token($session_token);
+    if ($actor_type === '' || $actor_id < 1 || $device_id === '' || $session_token === '') {
+        return false;
+    }
+
+    $type_esc  = $mysqli->real_escape_string($actor_type);
+    $device_esc = $mysqli->real_escape_string($device_id);
+    $token_esc = $mysqli->real_escape_string($session_token);
+    $mysqli->query(
+        "DELETE FROM mobile_app_active_session
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id
+           AND device_id='$device_esc' AND session_token='$token_esc'
+         LIMIT 1"
+    );
+    return true;
+}
+
+/** Update last_seen_at after a successful access check. */
+function pl_touch_mobile_app_session($mysqli, $actor_type, $actor_id, $device_id, $session_token) {
+    if (!pl_mobile_app_session_table_exists($mysqli)) {
+        return;
+    }
+
+    $actor_type    = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id      = (int) $actor_id;
+    $device_id     = pl_normalise_mobile_device_id($device_id);
+    $session_token = pl_normalise_mobile_session_token($session_token);
+    if ($actor_type === '' || $actor_id < 1 || $device_id === '' || $session_token === '') {
+        return;
+    }
+
+    $type_esc   = $mysqli->real_escape_string($actor_type);
+    $device_esc = $mysqli->real_escape_string($device_id);
+    $token_esc  = $mysqli->real_escape_string($session_token);
+    $now        = date('Y-m-d H:i:s');
+    $mysqli->query(
+        "UPDATE mobile_app_active_session
+         SET last_seen_at='$now'
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id
+           AND device_id='$device_esc' AND session_token='$token_esc'
+         LIMIT 1"
+    );
+}
+
+/** Admin/support: clear active session for an actor regardless of device/token. */
+function pl_force_release_mobile_app_session($mysqli, $actor_type, $actor_id) {
+    if (!pl_mobile_app_session_table_exists($mysqli)) {
+        return false;
+    }
+
+    $actor_type = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id   = (int) $actor_id;
+    if ($actor_type === '' || $actor_id < 1) {
+        return false;
+    }
+
+    $type_esc = $mysqli->real_escape_string($actor_type);
+    $mysqli->query(
+        "DELETE FROM mobile_app_active_session
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id
+         LIMIT 1"
+    );
+    if ($actor_type === 'staff') {
+        pl_clear_staff_registered_device($mysqli, $actor_id);
+    }
+    return true;
+}
+
+/** Device-transfer OTPs are single-use only (no time expiry). */
+
+function pl_mobile_app_device_transfer_otp_table_exists($mysqli) {
+    $tbl = $mysqli->query("SHOW TABLES LIKE 'mobile_app_device_transfer_otp'");
+    $exists = ($tbl && $tbl->num_rows > 0);
+    if ($tbl) {
+        $tbl->free();
+    }
+    return $exists;
+}
+
+function pl_normalise_device_transfer_otp($otp) {
+    $otp = preg_replace('/\D/', '', (string) $otp);
+    if (strlen($otp) !== 6) {
+        return '';
+    }
+    return $otp;
+}
+
+function pl_generate_device_transfer_otp_plaintext() {
+    return str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Create a new device-transfer OTP for an actor (invalidates prior unused codes).
+ *
+ * @return array{ok:bool,otp?:string,reason?:string}
+ */
+function pl_create_device_transfer_otp($mysqli, $actor_type, $actor_id, $created_by_staff_id = null) {
+    if (!pl_mobile_app_device_transfer_otp_table_exists($mysqli)) {
+        return array('ok' => false, 'reason' => 'table_missing');
+    }
+
+    $actor_type = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id   = (int) $actor_id;
+    if ($actor_type === '' || $actor_id < 1) {
+        return array('ok' => false, 'reason' => 'invalid_actor');
+    }
+
+    $plain = pl_generate_device_transfer_otp_plaintext();
+    $hash  = password_hash($plain, PASSWORD_DEFAULT);
+    if (!is_string($hash) || $hash === '') {
+        return array('ok' => false, 'reason' => 'hash_failed');
+    }
+
+    $type_esc  = $mysqli->real_escape_string($actor_type);
+    $hash_esc  = $mysqli->real_escape_string($hash);
+    $now       = date('Y-m-d H:i:s');
+    $by_sql    = ($created_by_staff_id !== null && (int) $created_by_staff_id > 0)
+        ? (int) $created_by_staff_id
+        : 'NULL';
+
+    $mysqli->query(
+        "UPDATE mobile_app_device_transfer_otp
+         SET used_at = '$now'
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id AND used_at IS NULL"
+    );
+
+    $sql = "INSERT INTO mobile_app_device_transfer_otp
+            (actor_type, actor_id, otp_hash, expires_at, created_at, created_by_staff_id)
+            VALUES ('$type_esc', $actor_id, '$hash_esc', NULL, '$now', $by_sql)";
+    if (!$mysqli->query($sql)) {
+        return array('ok' => false, 'reason' => 'db_error');
+    }
+
+    return array(
+        'ok'  => true,
+        'otp' => $plain,
+    );
+}
+
+function pl_mobile_app_staff_device_otp_table_exists($mysqli) {
+    $tbl = $mysqli->query("SHOW TABLES LIKE 'mobile_app_staff_device_otp'");
+    $exists = ($tbl && $tbl->num_rows > 0);
+    if ($tbl) {
+        $tbl->free();
+    }
+    return $exists;
+}
+
+/**
+ * Verify staff OTP and replace with a new code immediately.
+ */
+function pl_consume_staff_device_otp($mysqli, $staff_id, $otp_plain) {
+    if (!pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+        return false;
+    }
+
+    $staff_id  = (int) $staff_id;
+    $otp_plain = pl_normalise_device_transfer_otp($otp_plain);
+    if ($staff_id < 1 || $otp_plain === '') {
+        return false;
+    }
+
+    $res = $mysqli->query(
+        "SELECT otp_hash FROM mobile_app_staff_device_otp
+         WHERE staff_id=$staff_id
+         LIMIT 1"
+    );
+    if (!$res || $res->num_rows === 0) {
+        if ($res) {
+            $res->free();
+        }
+        return false;
+    }
+    $row  = $res->fetch_assoc();
+    $res->free();
+    $hash = (string) ($row['otp_hash'] ?? '');
+    if ($hash === '' || !password_verify($otp_plain, $hash)) {
+        return false;
+    }
+
+    $plain = pl_generate_device_transfer_otp_plaintext();
+    $new_hash = password_hash($plain, PASSWORD_DEFAULT);
+    if (!is_string($new_hash) || $new_hash === '') {
+        return false;
+    }
+
+    $plain_esc = $mysqli->real_escape_string($plain);
+    $hash_esc  = $mysqli->real_escape_string($new_hash);
+    $now       = date('Y-m-d H:i:s');
+    $ok        = $mysqli->query(
+        "UPDATE mobile_app_staff_device_otp
+         SET otp_code='$plain_esc', otp_hash='$hash_esc', last_used_at='$now', updated_at='$now'
+         WHERE staff_id=$staff_id
+         LIMIT 1"
+    );
+    return (bool) $ok;
+}
+
+/**
+ * Validate and consume a device-transfer OTP (single use).
+ */
+function pl_consume_device_transfer_otp($mysqli, $actor_type, $actor_id, $otp_plain) {
+    $actor_type = pl_normalise_mobile_app_actor_type($actor_type);
+    $actor_id   = (int) $actor_id;
+    if ($actor_type === 'staff') {
+        return pl_consume_staff_device_otp($mysqli, $actor_id, $otp_plain);
+    }
+
+    if (!pl_mobile_app_device_transfer_otp_table_exists($mysqli)) {
+        return false;
+    }
+
+    $otp_plain = pl_normalise_device_transfer_otp($otp_plain);
+    if ($actor_type === '' || $actor_id < 1 || $otp_plain === '') {
+        return false;
+    }
+
+    $type_esc = $mysqli->real_escape_string($actor_type);
+    $res      = $mysqli->query(
+        "SELECT id, otp_hash, expires_at, used_at
+         FROM mobile_app_device_transfer_otp
+         WHERE actor_type='$type_esc' AND actor_id=$actor_id AND used_at IS NULL
+         ORDER BY id DESC
+         LIMIT 5"
+    );
+    if (!$res) {
+        return false;
+    }
+
+    $matched_id = 0;
+    while ($row = $res->fetch_assoc()) {
+        $hash = (string) ($row['otp_hash'] ?? '');
+        if ($hash !== '' && password_verify($otp_plain, $hash)) {
+            $matched_id = (int) ($row['id'] ?? 0);
+            break;
+        }
+    }
+    $res->free();
+
+    if ($matched_id < 1) {
+        return false;
+    }
+
+    $now = date('Y-m-d H:i:s');
+    $mysqli->query(
+        "UPDATE mobile_app_device_transfer_otp SET used_at='$now' WHERE id=$matched_id AND used_at IS NULL LIMIT 1"
+    );
+    return true;
+}
+
 function pl_current_session_id($mysqli) {
     $sr = $mysqli->query('SELECT session_id FROM sch_settings ORDER BY id ASC LIMIT 1');
     if (!$sr || $sr->num_rows === 0) {

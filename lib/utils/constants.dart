@@ -14,6 +14,21 @@ const String supportUserId = '0';
 /// Used by background FCM so chat notification titles match in-app rules (e.g. "Support" for non-admins).
 const String prefsKeyUserType = 'current_user_type';
 
+/// Stable install UUID for single-device mobile session enforcement.
+const String prefsKeyMobileDeviceId = 'mobile_device_id';
+
+/// Server-issued mobile session token (cleared on logout).
+const String prefsKeyMobileSessionToken = 'mobile_session_token';
+
+/// Login API error: account active on another device (show transfer OTP field).
+const String loginErrorCodeDeviceInUse = 'device_in_use';
+
+/// Login API error: no registered device yet (show transfer OTP field).
+const String loginErrorCodeDeviceOtpRequired = 'device_otp_required';
+
+/// Login API error: device transfer OTP invalid or already used.
+const String loginErrorCodeInvalidOtp = 'invalid_otp';
+
 /// Opened from the dashboard profile menu (“Request delete account”). Set to your live form or policy URL.
 const String accountDeletionRequestUrl =
     'https://portal.gcsewithrosi.co.uk/account-deletion-request';

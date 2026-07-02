@@ -123,7 +123,10 @@ class _InboxScreenState extends State<InboxScreen> {
             Expanded(
               child: Consumer<InboxProvider>(
                 builder: (context, inboxProvider, child) {
-                  if (inboxProvider.isLoading) {
+                  final showFullScreenLoader =
+                      inboxProvider.isLoading && inboxProvider.chats.isEmpty;
+
+                  if (showFullScreenLoader) {
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -145,7 +148,8 @@ class _InboxScreenState extends State<InboxScreen> {
                     );
                   }
 
-                  if (inboxProvider.errorMessage != null) {
+                  if (inboxProvider.errorMessage != null &&
+                      inboxProvider.chats.isEmpty) {
                     return Center(
                       child: Padding(
                         padding: const EdgeInsets.all(24),
@@ -246,19 +250,41 @@ class _InboxScreenState extends State<InboxScreen> {
                     );
                   }
 
-                  return ListView.separated(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: chats.length,
-                    separatorBuilder: (context, index) => Divider(
-                      height: 1,
-                      indent: 88,
-                      endIndent: 16,
-                      color: AppColors.textSecondary.withOpacity(0.12),
+                  return RefreshIndicator(
+                    onRefresh: inboxProvider.refreshChats,
+                    color: AppColors.accentTeal,
+                    child: ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: EdgeInsets.only(
+                        top: inboxProvider.isRefreshing ? 4 : 8,
+                        bottom: 8,
+                      ),
+                      itemCount: chats.length +
+                          (inboxProvider.isRefreshing ? 1 : 0),
+                      separatorBuilder: (context, index) {
+                        if (inboxProvider.isRefreshing && index == 0) {
+                          return const SizedBox.shrink();
+                        }
+                        return Divider(
+                          height: 1,
+                          indent: 88,
+                          endIndent: 16,
+                          color: AppColors.textSecondary.withOpacity(0.12),
+                        );
+                      },
+                      itemBuilder: (context, index) {
+                        if (inboxProvider.isRefreshing && index == 0) {
+                          return const LinearProgressIndicator(
+                            minHeight: 2,
+                            backgroundColor: Colors.transparent,
+                          );
+                        }
+                        final chatIndex =
+                            inboxProvider.isRefreshing ? index - 1 : index;
+                        final chat = chats[chatIndex];
+                        return ChatListItem(chat: chat);
+                      },
                     ),
-                    itemBuilder: (context, index) {
-                      final chat = chats[index];
-                      return ChatListItem(chat: chat);
-                    },
                   );
                 },
               ),

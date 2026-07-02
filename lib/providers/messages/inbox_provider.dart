@@ -12,43 +12,45 @@ class InboxProvider with ChangeNotifier {
   AuthProvider? _authProvider;
 
   List<ChatModel> _chats = [];
-  bool _isLoading = false;
+  bool _isInitialLoading = false;
+  bool _isRefreshing = false;
   String? _errorMessage;
+  DateTime? _lastLoadedAt;
+  int _loadGeneration = 0;
+  bool _loadInProgress = false;
+  bool _pendingRefresh = false;
+  final Map<String, UserModel> _userProfileCache = {};
+
+  static const _cacheTtl = Duration(seconds: 30);
 
   List<ChatModel> get chats => _chats;
-  bool get isLoading => _isLoading;
+  bool get isLoading => _isInitialLoading;
+  bool get isRefreshing => _isRefreshing;
   String? get errorMessage => _errorMessage;
 
-  // Set auth provider (called from widget that has access to context)
+  /// Cached Firestore profile for a chat partner (first/last name, photo).
+  UserModel? cachedUserProfile(String userId) => _userProfileCache[userId];
+
   void setAuthProvider(AuthProvider authProvider) {
-    debugPrint(
-      'setAuthProvider called. Authenticated: ${authProvider.isAuthenticated}, UserId: ${authProvider.currentUserId}',
-    );
     _authProvider = authProvider;
-    // Reload chats when auth provider is set
     if (_authProvider != null && _authProvider!.isAuthenticated) {
-      debugPrint('Loading chats...');
-      _loadChats();
+      final shouldReload = _chats.isEmpty ||
+          _lastLoadedAt == null ||
+          DateTime.now().difference(_lastLoadedAt!) > _cacheTtl;
+      if (shouldReload) {
+        _loadChats();
+      }
     } else {
-      debugPrint('Not authenticated, skipping chat load');
-      _isLoading = false;
+      _isInitialLoading = false;
+      _isRefreshing = false;
       _errorMessage = 'User not authenticated';
       notifyListeners();
     }
   }
 
-  // Get current user ID from AuthProvider
   String? get currentUserId => _authProvider?.currentUserId;
 
-  InboxProvider() {
-    // Don't load chats here - wait for auth provider to be set
-  }
-
-  @override
-  void dispose() {
-    // No subscriptions to cancel anymore
-    super.dispose();
-  }
+  InboxProvider();
 
   String _getUserTypeForApi() {
     if (_authProvider?.userType == null) return 'student';
@@ -56,7 +58,6 @@ class InboxProvider with ChangeNotifier {
     return UserModel.userTypeToApiString(_authProvider!.userType!);
   }
 
-  /// Map API other_user_type (student, teacher, guardian, staff) to UserType for chat.
   static UserType _userTypeFromApiString(String? type) {
     if (type == null) return UserType.student;
     switch (type.toLowerCase()) {
@@ -73,7 +74,6 @@ class InboxProvider with ChangeNotifier {
     }
   }
 
-  // Get API user ID (staff_id, student_id, teacher_id, or parent_id) for fl_chat_users
   String? _getApiUserId() {
     if (_authProvider?.currentUser != null) {
       final user = _authProvider!.currentUser!;
@@ -83,9 +83,75 @@ class InboxProvider with ChangeNotifier {
     return null;
   }
 
-  // Load all chats for the current user via HTTP API
+  void _seedProfileCacheFromChats() {
+    for (final chat in _chats) {
+      final user = chat.user2;
+      if (user != null) _rememberUserProfile(user);
+    }
+  }
+
+  void _rememberUserProfile(UserModel user) {
+    if (!user.hasStructuredName &&
+        (user.photoUrl == null || user.photoUrl!.isEmpty)) {
+      return;
+    }
+    final existing = _userProfileCache[user.uid];
+    if (existing == null) {
+      _userProfileCache[user.uid] = user;
+      return;
+    }
+    _userProfileCache[user.uid] = UserModel(
+      uid: user.uid,
+      email: user.email.isNotEmpty ? user.email : existing.email,
+      displayName: user.hasStructuredName
+          ? user.displayName
+          : (existing.displayName ?? user.displayName),
+      firstName: user.firstName ?? existing.firstName,
+      lastName: user.lastName ?? existing.lastName,
+      phoneNumber: user.phoneNumber ?? existing.phoneNumber,
+      photoUrl: user.photoUrl ?? existing.photoUrl,
+      userType: user.userType,
+      createdAt: user.createdAt ?? existing.createdAt,
+      updatedAt: user.updatedAt ?? existing.updatedAt,
+      additionalData: user.additionalData ?? existing.additionalData,
+    );
+  }
+
+  UserModel _mergeWithCachedProfile(
+    UserModel apiUser, {
+    String? apiDisplayName,
+  }) {
+    final cached = _userProfileCache[apiUser.uid];
+    if (cached == null || !cached.hasStructuredName) return apiUser;
+    return UserModel(
+      uid: cached.uid,
+      email: cached.email.isNotEmpty ? cached.email : apiUser.email,
+      displayName: cached.displayName ?? apiDisplayName ?? apiUser.displayName,
+      firstName: cached.firstName,
+      lastName: cached.lastName,
+      phoneNumber: cached.phoneNumber ?? apiUser.phoneNumber,
+      photoUrl: cached.photoUrl ?? apiUser.photoUrl,
+      userType: cached.userType,
+      createdAt: cached.createdAt ?? apiUser.createdAt,
+      updatedAt: cached.updatedAt ?? apiUser.updatedAt,
+      additionalData: cached.additionalData ?? apiUser.additionalData,
+    );
+  }
+
   Future<void> _loadChats() async {
-    _isLoading = true;
+    if (_loadInProgress) {
+      _pendingRefresh = true;
+      return;
+    }
+    _loadInProgress = true;
+    final generation = ++_loadGeneration;
+
+    final isInitial = _chats.isEmpty;
+    if (isInitial) {
+      _isInitialLoading = true;
+    } else {
+      _isRefreshing = true;
+    }
     _errorMessage = null;
     notifyListeners();
 
@@ -95,235 +161,283 @@ class InboxProvider with ChangeNotifier {
           _authProvider == null ||
           !_authProvider!.isAuthenticated) {
         _errorMessage = 'User not authenticated';
-        _isLoading = false;
+        _isInitialLoading = false;
+        _isRefreshing = false;
         notifyListeners();
         return;
       }
 
       final userType = _getUserTypeForApi();
-
-      // Admins see Support Inbox (all support conversations). Students/teachers see their own connections (including Support).
       final inboxUserId = _authProvider!.userType == UserType.admin
           ? supportUserId
           : apiUserId;
       final inboxUserType = userType;
-
-      debugPrint(
-        'InboxProvider: Loading connections for user: $inboxUserId (type: $inboxUserType)',
-      );
-
-      // When loading Support inbox (admin), pass requesting_staff_id so only unclaimed or claimed-by-me threads are returned
       final requestingStaffId = _authProvider!.userType == UserType.admin
           ? apiUserId
           : null;
 
-      // Get connections from API
       final result = await MessagesChatRepository.getConnections(
         userId: inboxUserId,
         userType: inboxUserType,
         requestingStaffId: requestingStaffId,
       );
 
+      if (generation != _loadGeneration) return;
+
       if (result['success'] != true) {
         final error = result['error'] ?? 'Unknown error';
-        _errorMessage = 'Failed to load chats: $error';
-        _isLoading = false;
+        if (_chats.isEmpty) {
+          _errorMessage = 'Failed to load chats: $error';
+        }
+        _isInitialLoading = false;
+        _isRefreshing = false;
         notifyListeners();
         return;
       }
 
       final connections =
           result['connections'] as List<Map<String, dynamic>>? ?? [];
-
-      debugPrint('InboxProvider: Found ${connections.length} connections');
-
-      // Convert connections to ChatModel list
-      final List<ChatModel> chats = [];
       final currentUserId = _authProvider!.currentUserId;
+      _seedProfileCacheFromChats();
+      var chats = _buildChatsFromConnections(connections, currentUserId);
 
-      for (var conn in connections) {
-        try {
-          final connectionId = conn['id']?.toString() ?? '';
-          final otherUserId = conn['other_user_id']?.toString();
-          final otherUserType = conn['other_user_type']?.toString();
+      // First open: resolve Firestore names before showing the list (avoids username flash).
+      if (isInitial) {
+        chats = await _enrichChatsWithFirestoreProfiles(chats, generation);
+      }
 
-          if (otherUserId == null || otherUserId.isEmpty) {
-            debugPrint(
-              'InboxProvider: Skipping connection $connectionId - no other_user_id',
-            );
-            continue;
+      if (generation != _loadGeneration) return;
+
+      _chats = chats;
+      _lastLoadedAt = DateTime.now();
+      _isInitialLoading = false;
+      _isRefreshing = false;
+      _errorMessage = null;
+      notifyListeners();
+
+      if (!isInitial) {
+        unawaited(_refreshProfilesInBackground(generation));
+      }
+    } catch (e) {
+      if (generation != _loadGeneration) return;
+      if (_chats.isEmpty) {
+        _errorMessage = 'Error loading chats: ${e.toString()}';
+      }
+      _isInitialLoading = false;
+      _isRefreshing = false;
+      notifyListeners();
+      debugPrint('InboxProvider: Error loading chats: $e');
+    } finally {
+      _loadInProgress = false;
+      if (_pendingRefresh) {
+        _pendingRefresh = false;
+        unawaited(_loadChats());
+      }
+    }
+  }
+
+  List<ChatModel> _buildChatsFromConnections(
+    List<Map<String, dynamic>> connections,
+    String? currentUserId,
+  ) {
+    final List<ChatModel> chats = [];
+
+    for (var conn in connections) {
+      try {
+        final connectionId = conn['id']?.toString() ?? '';
+        final otherUserId = conn['other_user_id']?.toString();
+        final otherUserType = conn['other_user_type']?.toString();
+
+        if (otherUserId == null || otherUserId.isEmpty) continue;
+
+        final otherUserNameFromApi = conn['other_user_name']?.toString();
+        final apiUser = UserModel(
+          uid: otherUserId,
+          email: '',
+          displayName: otherUserNameFromApi?.isNotEmpty == true
+              ? otherUserNameFromApi
+              : null,
+          userType: _userTypeFromApiString(otherUserType),
+        );
+        final otherUser = _mergeWithCachedProfile(
+          apiUser,
+          apiDisplayName: otherUserNameFromApi,
+        );
+
+        final unreadCountRaw = conn['unread_count'];
+        final unreadCount = unreadCountRaw is int
+            ? unreadCountRaw
+            : (int.tryParse(unreadCountRaw?.toString() ?? '0') ?? 0);
+
+        final lastMessageData = conn['last_message'] as Map<String, dynamic>?;
+        String? lastMessage;
+        DateTime? lastMessageTime;
+        String? lastMessageSenderId;
+
+        if (lastMessageData != null) {
+          lastMessage = lastMessageData['message']?.toString();
+          lastMessageSenderId = lastMessageData['sender_id']?.toString();
+
+          final time = lastMessageData['time'];
+          if (time != null) {
+            if (time is int) {
+              lastMessageTime =
+                  DateTime.fromMillisecondsSinceEpoch(time * 1000);
+            } else if (time is String) {
+              final timeInt = int.tryParse(time);
+              if (timeInt != null) {
+                lastMessageTime =
+                    DateTime.fromMillisecondsSinceEpoch(timeInt * 1000);
+              } else {
+                try {
+                  lastMessageTime = DateTime.parse(time);
+                } catch (_) {}
+              }
+            }
           }
 
-          // Fetch the other user's data from Firestore (or use API name for parents/guardians when Firestore uses uid not id)
-          final otherUserNameFromApi = conn['other_user_name']?.toString();
-          UserModel? otherUser;
+          if (lastMessageTime == null) {
+            final createdAt = lastMessageData['created_at']?.toString();
+            if (createdAt != null) {
+              try {
+                lastMessageTime = DateTime.parse(createdAt);
+              } catch (_) {}
+            }
+          }
+        }
+
+        DateTime? createdAt;
+        final connCreatedAt = conn['created_at']?.toString();
+        if (connCreatedAt != null) {
           try {
-            final userDoc = await _firestore
-                .collection('user')
-                .doc(otherUserId)
-                .get();
-            if (userDoc.exists) {
-              otherUser = UserModel.fromFirestore(userDoc);
-              if (otherUser.fullName.isEmpty && otherUserNameFromApi != null && otherUserNameFromApi.isNotEmpty) {
-                otherUser = UserModel(
-                  uid: otherUser.uid,
-                  email: otherUser.email,
-                  displayName: otherUserNameFromApi,
-                  firstName: otherUser.firstName,
-                  lastName: otherUser.lastName,
-                  phoneNumber: otherUser.phoneNumber,
-                  photoUrl: otherUser.photoUrl,
-                  userType: otherUser.userType,
-                  createdAt: otherUser.createdAt,
-                  updatedAt: otherUser.updatedAt,
-                  additionalData: otherUser.additionalData,
-                );
-              }
-              debugPrint(
-                'InboxProvider: Fetched user data for: ${otherUser.fullName}',
-              );
-            } else {
-              debugPrint(
-                'InboxProvider: User document not found for ID: $otherUserId',
-              );
-              // Create a minimal user model; use API name (e.g. for parents where Firestore doc id is uid not parent id)
-              otherUser = UserModel(
-                uid: otherUserId,
-                email: '',
-                displayName: otherUserNameFromApi?.isNotEmpty == true ? otherUserNameFromApi : null,
-                userType: InboxProvider._userTypeFromApiString(otherUserType),
-              );
-            }
-          } catch (e) {
-            debugPrint('InboxProvider: Error fetching user data: $e');
-            otherUser = UserModel(
-              uid: otherUserId,
-              email: '',
-              displayName: otherUserNameFromApi?.isNotEmpty == true ? otherUserNameFromApi : null,
-              userType: InboxProvider._userTypeFromApiString(otherUserType),
-            );
-          }
+            createdAt = DateTime.parse(connCreatedAt);
+          } catch (_) {}
+        }
 
-          // Unread count: messages not read by the current user (from API)
-          final unreadCountRaw = conn['unread_count'];
-          final unreadCount = unreadCountRaw is int
-              ? unreadCountRaw
-              : (int.tryParse(unreadCountRaw?.toString() ?? '0') ?? 0);
-
-          // Parse last message
-          final lastMessageData = conn['last_message'] as Map<String, dynamic>?;
-          String? lastMessage;
-          DateTime? lastMessageTime;
-          String? lastMessageSenderId;
-
-          if (lastMessageData != null) {
-            lastMessage = lastMessageData['message']?.toString();
-            lastMessageSenderId = lastMessageData['sender_id']?.toString();
-
-            // Parse timestamp (Unix timestamp in seconds)
-            final time = lastMessageData['time'];
-            if (time != null) {
-              if (time is int) {
-                // Time is in seconds, convert to milliseconds
-                lastMessageTime = DateTime.fromMillisecondsSinceEpoch(
-                  time * 1000,
-                );
-              } else if (time is String) {
-                try {
-                  // Try parsing as integer string first
-                  final timeInt = int.tryParse(time);
-                  if (timeInt != null) {
-                    lastMessageTime = DateTime.fromMillisecondsSinceEpoch(
-                      timeInt * 1000,
-                    );
-                  } else {
-                    // Try parsing as ISO string
-                    lastMessageTime = DateTime.parse(time);
-                  }
-                } catch (e) {
-                  debugPrint('InboxProvider: Error parsing time: $e');
-                }
-              }
-            }
-
-            // Try created_at if time is not available
-            if (lastMessageTime == null) {
-              final createdAt = lastMessageData['created_at']?.toString();
-              if (createdAt != null) {
-                try {
-                  lastMessageTime = DateTime.parse(createdAt);
-                } catch (e) {
-                  debugPrint('InboxProvider: Error parsing created_at: $e');
-                }
-              }
-            }
-          }
-
-          // Parse created_at for connection
-          DateTime? createdAt;
-          final connCreatedAt = conn['created_at']?.toString();
-          if (connCreatedAt != null) {
-            try {
-              createdAt = DateTime.parse(connCreatedAt);
-            } catch (e) {
-              debugPrint(
-                'InboxProvider: Error parsing connection created_at: $e',
-              );
-            }
-          }
-
-          // Create ChatModel with current user as user1 and other user as user2
-          // Pass otherUserDisplayName from API so parents show name even when Firestore doc id differs (e.g. parent id vs uid)
-          final chatModel = ChatModel(
+        chats.add(
+          ChatModel(
             chatId: connectionId,
             user1Id: currentUserId ?? '',
             user2Id: otherUserId,
-            user1: null, // Current user - not needed for display
-            user2: otherUser, // Other user - needed for display
-            otherUserDisplayName: otherUserNameFromApi?.trim().isNotEmpty == true ? otherUserNameFromApi!.trim() : null,
+            user1: null,
+            user2: otherUser,
+            otherUserDisplayName:
+                otherUserNameFromApi?.trim().isNotEmpty == true
+                    ? otherUserNameFromApi!.trim()
+                    : null,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             lastMessageSenderId: lastMessageSenderId,
             hasUnreadMessages: unreadCount > 0,
             unreadCount: unreadCount,
             createdAt: createdAt,
-          );
+          ),
+        );
+      } catch (e) {
+        debugPrint('InboxProvider: Error processing connection: $e');
+      }
+    }
 
-          chats.add(chatModel);
-        } catch (e) {
-          debugPrint('InboxProvider: Error processing connection: $e');
-        }
+    chats.sort((a, b) {
+      if (a.lastMessageTime == null && b.lastMessageTime == null) return 0;
+      if (a.lastMessageTime == null) return 1;
+      if (b.lastMessageTime == null) return -1;
+      return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+    });
+
+    return chats;
+  }
+
+  Future<List<ChatModel>> _enrichChatsWithFirestoreProfiles(
+    List<ChatModel> chats,
+    int generation,
+  ) async {
+    if (generation != _loadGeneration || chats.isEmpty) return chats;
+
+    final userIds = chats
+        .map((chat) => chat.user2Id)
+        .where((id) => id.isNotEmpty)
+        .where((id) {
+          final cached = _userProfileCache[id];
+          return cached == null || !cached.hasStructuredName;
+        })
+        .toSet()
+        .toList();
+
+    if (userIds.isEmpty) {
+      return _applyCachedProfilesToChats(chats);
+    }
+
+    try {
+      final docs = await Future.wait(
+        userIds.map((id) => _firestore.collection('user').doc(id).get()),
+      );
+
+      if (generation != _loadGeneration) return chats;
+
+      for (var i = 0; i < userIds.length; i++) {
+        final doc = docs[i];
+        if (!doc.exists) continue;
+        _rememberUserProfile(UserModel.fromFirestore(doc));
       }
 
-      // Sort chats by last message time (most recent first)
-      chats.sort((a, b) {
-        if (a.lastMessageTime == null && b.lastMessageTime == null) {
-          return 0;
-        }
-        if (a.lastMessageTime == null) return 1;
-        if (b.lastMessageTime == null) return -1;
-        return b.lastMessageTime!.compareTo(a.lastMessageTime!);
-      });
-
-      _chats = chats;
-      _isLoading = false;
-      _errorMessage = null;
-      debugPrint('InboxProvider: Loaded ${_chats.length} chats');
-      notifyListeners();
+      return _applyCachedProfilesToChats(chats);
     } catch (e) {
-      _errorMessage = 'Error loading chats: ${e.toString()}';
-      _isLoading = false;
-      notifyListeners();
-      debugPrint('InboxProvider: Error loading chats: $e');
+      debugPrint('InboxProvider: Firestore profile enrichment failed: $e');
+      return chats;
     }
   }
 
-  // Refresh chats list
+  List<ChatModel> _applyCachedProfilesToChats(List<ChatModel> chats) {
+    return chats.map((chat) {
+      final cached = _userProfileCache[chat.user2Id];
+      if (cached == null || !cached.hasStructuredName) return chat;
+
+      final apiName = chat.otherUserDisplayName;
+      final mergedUser = UserModel(
+        uid: cached.uid,
+        email: cached.email.isNotEmpty ? cached.email : (chat.user2?.email ?? ''),
+        displayName: cached.displayName ?? apiName ?? chat.user2?.displayName,
+        firstName: cached.firstName,
+        lastName: cached.lastName,
+        phoneNumber: cached.phoneNumber ?? chat.user2?.phoneNumber,
+        photoUrl: cached.photoUrl ?? chat.user2?.photoUrl,
+        userType: cached.userType,
+        createdAt: cached.createdAt ?? chat.user2?.createdAt,
+        updatedAt: cached.updatedAt ?? chat.user2?.updatedAt,
+        additionalData: cached.additionalData ?? chat.user2?.additionalData,
+      );
+
+      return chat.copyWith(user2: mergedUser);
+    }).toList();
+  }
+
+  Future<void> _refreshProfilesInBackground(int generation) async {
+    if (_chats.isEmpty || generation != _loadGeneration) return;
+
+    final enriched = await _enrichChatsWithFirestoreProfiles(
+      _chats,
+      generation,
+    );
+    if (generation != _loadGeneration) return;
+
+    final changed = enriched.length != _chats.length ||
+        enriched.asMap().entries.any(
+              (e) => e.value.user2?.uid != _chats[e.key].user2?.uid ||
+                  e.value.user2?.fullName != _chats[e.key].user2?.fullName ||
+                  e.value.user2?.photoUrl != _chats[e.key].user2?.photoUrl,
+            );
+
+    if (changed) {
+      _chats = enriched;
+      notifyListeners();
+    }
+  }
+
   Future<void> refreshChats() async {
     await _loadChats();
   }
 
-  // Search chats by the other user's name or email
   List<ChatModel> searchChats(String query) {
     if (query.isEmpty) return _chats;
 
