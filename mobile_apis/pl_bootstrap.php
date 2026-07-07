@@ -335,7 +335,10 @@ function pl_claim_mobile_app_session($mysqli, $actor_type, $actor_id, $device_id
     }
 
     $type_esc = $mysqli->real_escape_string($actor_type);
-    if ($actor_type === 'staff' && pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
+    // Guardian/parent accounts sign in on any device without an admin transfer code.
+    if ($actor_type === 'app_parent_user') {
+        $otp_reason = '';
+    } elseif ($actor_type === 'staff' && pl_mobile_app_staff_device_otp_table_exists($mysqli)) {
         $otp_reason = pl_staff_mobile_app_login_requires_otp($mysqli, $actor_id, $device_id);
     } else {
         $res = $mysqli->query(

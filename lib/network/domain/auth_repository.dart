@@ -188,7 +188,7 @@ class AuthRepository {
   }
 
   /// Mobile-only parent login against the `app_parent_users` table
-  /// (`/mobile_apis/parent_login.php`). Bcrypt-verified on the server.
+  /// (`/parent-app/login` via CodeIgniter — credential-only, no device checks).
   ///
   /// [identifier] — username OR email (case-insensitive).
   /// [password]   — plaintext, never logged.
@@ -200,29 +200,25 @@ class AuthRepository {
   static Future<Map<String, dynamic>> loginAppParent({
     required String identifier,
     required String password,
-    String? deviceTransferOtp,
   }) async {
     try {
       debugPrint(
         'AuthRepository: Logging in app parent - identifier: $identifier',
       );
 
-      final deviceFields = await _mobileDeviceLoginFields();
-
       final response = await ApiClient.postJson(
-        endpoint: '/mobile_apis/parent_login.php',
+        endpoint: '/parent-app/login',
         body: {
           'identifier': identifier,
+          'username': identifier,
           'password': password,
-          ...deviceFields,
-          ..._optionalDeviceTransferOtp(deviceTransferOtp),
         },
       );
 
       debugPrint('AuthRepository: API response received for parent login');
 
       if (response['success'] != true) {
-        final err = response['error']?.toString();
+        final err = response['error']?.toString() ?? response['message']?.toString();
         return {
           'success': false,
           'error': (err == null || err.isEmpty)
@@ -233,17 +229,38 @@ class AuthRepository {
       }
 
       final raw = response['result'];
-      if (raw is! Map<String, dynamic>) {
+      if (raw is Map<String, dynamic>) {
         return {
-          'success': false,
-          'error': 'Unexpected login response shape.',
+          'success': true,
+          'data': raw,
+          'mobile_session_token': _extractMobileSessionToken(raw) ??
+              _extractMobileSessionToken(response),
         };
       }
+
+      // Legacy parent-app/login shape (pre Flutter guardian endpoint update).
+      if (response['parent_id'] != null) {
+        final parentId = int.tryParse(response['parent_id'].toString()) ?? 0;
+        final loginUserId =
+            int.tryParse(response['login_user_id']?.toString() ?? '') ?? 0;
+        if (parentId > 0) {
+          final legacy = <String, dynamic>{
+            'app_parent_id': parentId,
+            if (loginUserId > 0) 'app_parent_user_id': loginUserId,
+            'username': response['username']?.toString() ?? '',
+            'email': response['parent_email']?.toString() ?? '',
+            'name': response['parent_name']?.toString() ?? '',
+          };
+          return {
+            'success': true,
+            'data': legacy,
+          };
+        }
+      }
+
       return {
-        'success': true,
-        'data': raw,
-        'mobile_session_token': _extractMobileSessionToken(raw) ??
-            _extractMobileSessionToken(response),
+        'success': false,
+        'error': 'Unexpected login response shape.',
       };
     } on ApiException catch (e) {
       debugPrint('AuthRepository: ApiException for parent login: ${e.message}');

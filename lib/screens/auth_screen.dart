@@ -91,7 +91,9 @@ class _AuthScreenState extends State<AuthScreen>
       _emailController.text.trim(),
       _passwordController.text,
       _selectedUserType!,
-      deviceTransferOtp: transferOtp.isEmpty ? null : transferOtp,
+      deviceTransferOtp: _selectedUserType == UserType.guardian
+          ? null
+          : (transferOtp.isEmpty ? null : transferOtp),
     );
 
     if (success && mounted) {
@@ -375,7 +377,8 @@ class _AuthScreenState extends State<AuthScreen>
 
           Consumer<AuthProvider>(
             builder: (context, authProvider, child) {
-              if (!authProvider.deviceTransferOtpRequired) {
+              if (_selectedUserType == UserType.guardian ||
+                  !authProvider.deviceTransferOtpRequired) {
                 return const SizedBox.shrink();
               }
               return Column(

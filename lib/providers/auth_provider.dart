@@ -561,12 +561,16 @@ class AuthProvider with ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get deviceTransferOtpRequired => _deviceTransferOtpRequired;
 
-  void _applyLoginFailure(Map<String, dynamic> result) {
+  void _applyLoginFailure(
+    Map<String, dynamic> result, {
+    bool allowDeviceTransferOtp = true,
+  }) {
     _errorMessage = result['error']?.toString() ?? 'Authentication failed';
     final code = result['error_code']?.toString();
-    _deviceTransferOtpRequired = code == loginErrorCodeDeviceInUse ||
-        code == loginErrorCodeDeviceOtpRequired ||
-        code == loginErrorCodeInvalidOtp;
+    _deviceTransferOtpRequired = allowDeviceTransferOtp &&
+        (code == loginErrorCodeDeviceInUse ||
+            code == loginErrorCodeDeviceOtpRequired ||
+            code == loginErrorCodeInvalidOtp);
   }
 
   void _clearLoginFailureState() {
@@ -647,6 +651,8 @@ class AuthProvider with ChangeNotifier {
   void _startMobileAccessMonitoring() {
     if (!_isAuthenticated || _currentUser == null) return;
     if (isSuperAdmin) return;
+    // Guardian login is credential-only; no device/session enforcement.
+    if (_currentUser!.userType == UserType.guardian) return;
     if (_mobileAccessActor == null) return;
 
     _mobileAccessCheckTimer?.cancel();
@@ -665,8 +671,9 @@ class AuthProvider with ChangeNotifier {
   Future<void> _persistMobileSessionFromLogin(
     Map<String, dynamic> result, {
     Map<String, dynamic>? loginData,
+    bool persistSession = true,
   }) async {
-    if (isSuperAdmin) return;
+    if (isSuperAdmin || !persistSession) return;
     String? token = result['mobile_session_token']?.toString().trim();
     if ((token == null || token.isEmpty) && loginData != null) {
       token = loginData['mobile_session_token']?.toString().trim();
@@ -681,6 +688,7 @@ class AuthProvider with ChangeNotifier {
   Future<void> enforceMobileAppAccess() async {
     if (!_isAuthenticated || _currentUser == null) return;
     if (isSuperAdmin) return;
+    if (_currentUser!.userType == UserType.guardian) return;
     if (_mobileAccessRevocationInProgress) return;
 
     final actor = _mobileAccessActor;
@@ -1133,7 +1141,6 @@ class AuthProvider with ChangeNotifier {
         return await _loginAsAppParent(
           usernameOrEmail.trim(),
           password,
-          deviceTransferOtp: deviceTransferOtp,
         );
       }
 
@@ -1324,18 +1331,25 @@ class AuthProvider with ChangeNotifier {
   /// flow is for parents who only exist in the mobile app.
   Future<bool> _loginAsAppParent(
     String identifier,
-    String password, {
-    String? deviceTransferOtp,
-  }) async {
+    String password,
+  ) async {
     try {
       final result = await AuthRepository.loginAppParent(
         identifier: identifier,
         password: password,
-        deviceTransferOtp: deviceTransferOtp,
       );
 
       if (result['success'] != true || result['data'] == null) {
-        _applyLoginFailure(result);
+        _applyLoginFailure(result, allowDeviceTransferOtp: false);
+        final msg = _errorMessage?.toLowerCase() ?? '';
+        if (msg.contains('device identification')
+            || msg.contains('transfer code')
+            || msg.contains('device transfer')
+            || msg.contains('registered mobile device')
+            || msg.contains('active on another device')) {
+          _errorMessage =
+              'Unable to sign in. Please check your username and password, or contact the school office.';
+        }
         _isLoading = false;
         notifyListeners();
         return false;
@@ -1372,6 +1386,7 @@ class AuthProvider with ChangeNotifier {
       await _persistMobileSessionFromLogin(
         result,
         loginData: data,
+        persistSession: false,
       );
       _startMobileAccessMonitoring();
       _clearLoginFailureState();
@@ -1409,7 +1424,7 @@ class AuthProvider with ChangeNotifier {
       _stopMobileAccessMonitoring();
 
       final actor = _mobileAccessActor;
-      if (actor != null && !isSuperAdmin) {
+      if (actor != null && !isSuperAdmin && _currentUser?.userType != UserType.guardian) {
         await MobileAppAccessService.releaseSessionOnLogout(
           actorType: actor.type,
           actorId: actor.id,
